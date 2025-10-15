@@ -1,4 +1,15 @@
+# Python
 .venv/
 __pycache__/
-.venv/
-__pycache__/
+*.pyc
+
+# Local runs / artifacts
+logs/
+plots/
+*.png
+*.pdf
+
+# Editors/OS
+.DS_Store
+.vscode/
+.idea/
