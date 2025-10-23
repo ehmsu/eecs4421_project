@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<robot name="hopper">
+  <link name="world"/>
+  <link name="body">
+    <inertial><mass value="1.5"/><inertia ixx="0.02" iyy="0.02" izz="0.02"/></inertial>
+    <visual><geometry><capsule radius="0.06" length="0.3"/></geometry></visual>
+    <collision><geometry><capsule radius="0.06" length="0.3"/></geometry></collision>
+  </link>
+  <joint name="slider_z" type="prismatic">
+    <parent link="world"/><child link="body"/>
+    <origin xyz="0 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="0.1" upper="2.0" effort="2000" velocity="10"/>
+  </joint>
+</robot>
