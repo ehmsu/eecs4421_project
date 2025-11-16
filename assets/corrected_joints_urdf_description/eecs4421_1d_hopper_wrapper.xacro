@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<robot name="eecs4421_1d_hopper" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- Wrapper for corrected joints URDF - base_link is root, motion handled via clamp mode -->
+  <xacro:include filename="urdf/corrected_joints_urdf.xacro" />
+  <!-- No world link - base_link is the root link and will be free in PyBullet -->
+  <!-- 1D motion will be constrained via code using _clamp_to_1d() method -->
+</robot>
+

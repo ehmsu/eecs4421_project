@@ -23,16 +23,28 @@ class Hopper1D:
         p.setGravity(0,0,-9.81)
         self.dt = sim_timestep
         p.setTimeStep(self.dt)
+        # Optimize physics solver for efficiency
+        p.setPhysicsEngineParameter(
+            numSolverIterations=10,  # Reduced from default for efficiency
+            enableConeFriction=0,    # Disable cone friction (not needed for 1D)
+            deterministicOverlappingPairs=1  # Deterministic for reproducibility
+        )
         self.plane = p.loadURDF("plane.urdf")
-        # Reduce contact stiffness to allow spring-damper forces to overcome contact constraints
-        p.changeDynamics(self.plane, -1, lateralFriction=0.5, restitution=0.0, contactStiffness=1e6, contactDamping=100)
+        # Optimize ground plane - minimal contact properties since we handle contact via spring-damper
+        p.changeDynamics(self.plane, -1, 
+                        lateralFriction=0.0,  # No friction needed (1D motion)
+                        restitution=0.0, 
+                        contactStiffness=1e4,  # Reduced for efficiency
+                        contactDamping=50)     # Reduced for efficiency
 
         self.body, self.motion_mode, self.motion_link_idx, self.has_joint = self._load_robot()
         self.mass = self._infer_mass(self.body, self.motion_link_idx)
-        # Store the desired orientation (springs down, wheels up)
-        # Wheels are on Y-axis (0, 0.15, 0) and (0, -0.15, 0)
-        # Rotate -90° around X-axis to put wheels at top (Z+) and springs pointing down (Z-)
-        self.base_orientation = p.getQuaternionFromEuler([-1.5708, 0, 0])
+        # Store the desired orientation (wheels at top, springs at bottom pointing down)
+        # Rotate -180° around X-axis to flip the model
+        self.base_orientation = p.getQuaternionFromEuler([-3.14159, 0, 0])
+        # Calculate the offset from base COM to the lowest point of the robot (spring tips)
+        # This is needed to detect actual ground contact
+        self._calculate_ground_offset()
         if self.has_joint:
             # Don't set any joint control - let the joint move freely under gravity
             # We'll apply forces via TORQUE_CONTROL in _apply_force when needed
@@ -40,30 +52,55 @@ class Hopper1D:
             p.changeDynamics(self.body, self.motion_link_idx, 
                            linearDamping=0.0, angularDamping=0.0,
                            jointDamping=0.0)
-        # Reduce contact stiffness on robot links to allow spring forces to work
+        # Optimize robot link dynamics for efficiency
         # Keep collisions enabled so model stays together visually
         num_joints = p.getNumJoints(self.body)
         for i in range(-1, num_joints):
             p.changeDynamics(self.body, i, 
-                           lateralFriction=0.5, restitution=0.0,
-                           contactStiffness=1e6, contactDamping=100)
-        # Disable collision only between base link and ground plane - we handle contact via spring-damper model
+                           lateralFriction=0.0,  # No friction needed (1D motion, clamp mode)
+                           restitution=0.0,
+                           contactStiffness=1e4,  # Reduced for efficiency
+                           contactDamping=50,     # Reduced for efficiency
+                           activationState=p.ACTIVATION_STATE_WAKE_UP)  # Wake up robot so it responds to gravity
+        # Disable collision between ALL robot links and ground plane - we handle contact via spring-damper model
         # All internal collisions between robot parts remain enabled by default (fixed joints keep them together)
         p.setCollisionFilterPair(self.body, self.plane, -1, -1, enableCollision=0)
-        # Ensure all fixed joints are properly constrained to keep parts together (wheels, springs, etc.)
-        # Fixed joints should automatically keep parts together, but we ensure they're stable
+        # Also disable collisions for all individual links with ground
+        num_joints = p.getNumJoints(self.body)
+        for i in range(-1, num_joints):
+            p.setCollisionFilterPair(self.body, self.plane, i, -1, enableCollision=0)
+        # Lock ALL joints (fixed, prismatic, revolute) so the robot moves as one rigid body
+        # This prevents wheels, springs, and other parts from sliding away
         for i in range(num_joints):
             ji = p.getJointInfo(self.body, i)
-            if ji[2] == p.JOINT_FIXED:  # Fixed joint
-                # Fixed joints don't need motor control, but ensure they're stable
-                # The joint itself keeps parts connected
+            joint_name = ji[1].decode('utf-8')
+            joint_type = ji[2]
+            
+            if joint_type == p.JOINT_FIXED:
+                # Fixed joints are already locked, but ensure they stay that way
                 pass
+            elif joint_type == p.JOINT_PRISMATIC:
+                # Lock prismatic joints (springs, moving frame) - robot should move as one body
+                # Use very high force to prevent parts from sliding when manually pushed
+                p.setJointMotorControl2(self.body, i, p.POSITION_CONTROL, 
+                                       targetPosition=0, force=1e20)
+                p.changeDynamics(self.body, i, 
+                               jointLowerLimit=0, jointUpperLimit=0)
+            elif joint_type == p.JOINT_REVOLUTE:
+                # Lock revolute joints (wheels, gears) - they shouldn't spin in 1D hopping
+                # Use very high force to prevent parts from rotating when manually pushed
+                p.setJointMotorControl2(self.body, i, p.POSITION_CONTROL, 
+                                       targetPosition=0, force=1e20)
+                p.changeDynamics(self.body, i, 
+                               jointLowerLimit=0, jointUpperLimit=0)
 
-        # Model/Control (per feedback)
-        # Increased spring stiffness and control gains for more visible hopping
-        self.K_h=4000.0; self.B_h=30.0; self.L_rest=0.30
+        # Model/Control (tuned for stable, consistent hopping)
+        # Spring stiffness: moderate for stable hopping (~12-14 Hz natural frequency)
+        # Damping: increased to allow longer stance phase and smoother bouncing
+        self.K_h=4000.0; self.B_h=45.0; self.L_rest=0.30
         self.h_target=0.80; self.k_raibert=0.30; self.u_h_max=0.08
-        self.T_stance_estimate=0.15; self.pulse_phase_start=0.10; self.pulse_width=0.30
+        # Stance time estimate: tuned to match actual stance duration (~0.05-0.06s)
+        self.T_stance_estimate=0.055; self.pulse_phase_start=0.25; self.pulse_width=0.50
         # Increase F_max_scalar significantly to allow sufficient force for hopping
         # At z=-0.1, L=0.3, force = K*(L-z) = 4000*0.4 = 1600N needed
         self.F_max_scalar=500.0; self.F_peak_guard=self.F_max_scalar*self.mass*9.81
@@ -73,6 +110,9 @@ class Hopper1D:
         self.current_u_h=0.0; self.F_peak_stance=0.0
         self.log_data=[]; self.apex_history=[]
         self.h_start=0.80; self._reset_height(self.h_start)
+        # Track if we've had a real stance phase (landed) before counting apex
+        # This prevents counting oscillations in the air as "hops"
+        self.has_landed_once = False
 
     # ---------- loading ----------
     def _find_first_urdf(self):
@@ -115,10 +155,10 @@ class Hopper1D:
             # New structure without world link - base_link is root
             # Use useFixedBase=False so robot can move, then clamp to 1D in code
             use_fixed = False
-            # Rotate -90° around X-axis to put wheels (on Y-axis) at top and springs pointing down
-            base_orientation = p.getQuaternionFromEuler([-1.5708, 0, 0])
+            # Rotate -180° around X-axis to flip the model
+            base_orientation = p.getQuaternionFromEuler([-3.14159, 0, 0])
             body=p.loadURDF(urdf_path,useFixedBase=use_fixed,baseOrientation=base_orientation,flags=p.URDF_USE_INERTIA_FROM_FILE)
-            logging.info(f"Loaded URDF: {urdf_path} (useFixedBase=False, rotated 90° around X-axis: wheels at top, springs down, clamp mode)")
+            logging.info(f"Loaded URDF: {urdf_path} (useFixedBase=False, rotated -180° X: wheels at top, springs at bottom, clamp mode)")
         except Exception as e:
             logging.error(f"URDF load failed: {urdf_path} -> {e}; using fallback.")
             fb="assets/mr_springs.urdf"; Path(fb).write_text(self._fallback_urdf_text())
@@ -135,17 +175,11 @@ class Hopper1D:
             logging.info(f"World link detected; using clamp mode on link {anchor} (joint mode not supported).")
             return body,"clamp",anchor,False
         
-        # No world link - check for Z prismatic joint
-        z_joint=None
-        for j in range(p.getNumJoints(body)):
-            ji=p.getJointInfo(body,j)
-            if ji[2]==p.JOINT_PRISMATIC and abs(ji[13][2])>0.9:
-                z_joint=j; break
-        if z_joint is not None:
-            return body,"joint",z_joint,True
-        # else clamp mode (choose heaviest link/base)
+        # No world link - use clamp mode (robot moves as one body)
+        # Even if there are internal prismatic joints (like moving_frame_to_base_link),
+        # we want the whole robot to move together, so use clamp mode
         anchor=self._pick_heaviest_link(body)
-        logging.info(f"No Z-prismatic joint; using clamp on link {anchor}.")
+        logging.info(f"Using clamp mode on link {anchor} (robot moves as one body).")
         return body,"clamp",anchor,False
 
     def _pick_heaviest_link(self, body):
@@ -195,6 +229,8 @@ class Hopper1D:
             # Use stored orientation (springs down, wheels up)
             p.resetBasePositionAndOrientation(self.body,[0,0,z0],self.base_orientation)
             p.resetBaseVelocity(self.body,[0,0,0],[0,0,0])
+        # Wake up the robot after reset so it responds to gravity
+        p.changeDynamics(self.body, -1, activationState=p.ACTIVATION_STATE_WAKE_UP)
 
     def _get_z_vz(self):
         if self.motion_mode=="joint" and self.has_joint:
@@ -212,6 +248,30 @@ class Hopper1D:
         return ls[0][2], ls[6][2]
 
     def _contacting(self): return len(p.getContactPoints(self.body,self.plane))>0
+    
+    def _calculate_ground_offset(self):
+        """Calculate the offset from base COM to the lowest point of the robot (spring tips).
+        This is used to detect actual ground contact, not just COM position."""
+        # Get base position and orientation
+        base_pos, base_ori = p.getBasePositionAndOrientation(self.body)
+        # Find the lowest point of all links in world coordinates
+        lowest_z_world = float('inf')
+        for i in range(-1, p.getNumJoints(self.body)):
+            # Get AABB in world coordinates
+            aabb_min, aabb_max = p.getAABB(self.body, i)
+            if aabb_min[2] < lowest_z_world:
+                lowest_z_world = aabb_min[2]
+        # Calculate offset: how far below the base COM is the lowest point?
+        self.ground_offset = base_pos[2] - lowest_z_world
+        logging.info(f"Ground offset (base COM to lowest point): {self.ground_offset:.3f}m")
+        return self.ground_offset
+    
+    def _get_lowest_point_z(self):
+        """Get the Z coordinate of the lowest point of the robot (spring tips) in world coordinates."""
+        # Get base COM position
+        base_pos, _ = p.getBasePositionAndOrientation(self.body)
+        # Return base COM z minus the offset to get the lowest point
+        return base_pos[2] - self.ground_offset
 
     def _apply_force(self,fz):
         if abs(fz)<=0: return
@@ -229,24 +289,29 @@ class Hopper1D:
 
     def _clamp_to_1d(self):
         if self.motion_mode!="clamp": return
-        if self.motion_link_idx==-1:
-            pos,ori=p.getBasePositionAndOrientation(self.body); lin,ang=p.getBaseVelocity(self.body)
-            # Only clamp if position or orientation has drifted from desired state
-            # Check if position is off X/Y axis or orientation has changed
-            if abs(pos[0]) > 1e-6 or abs(pos[1]) > 1e-6:
-                p.resetBasePositionAndOrientation(self.body,[0,0,pos[2]],self.base_orientation)
-            # Check if velocity has X/Y components or angular velocity
-            if abs(lin[0]) > 1e-6 or abs(lin[1]) > 1e-6 or abs(ang[0]) > 1e-6 or abs(ang[1]) > 1e-6 or abs(ang[2]) > 1e-6:
-                p.resetBaseVelocity(self.body,[0,0,lin[2]],[0,0,0])
-        else:
-            pos,ori=p.getBasePositionAndOrientation(self.body)
-            # Only clamp if position has drifted
-            if abs(pos[0]) > 1e-6 or abs(pos[1]) > 1e-6:
-                p.resetBasePositionAndOrientation(self.body,[0,0,pos[2]],self.base_orientation)
-            lin,ang=p.getBaseVelocity(self.body)
-            # Preserve Z velocity, clamp X/Y and angular
-            if abs(lin[0]) > 1e-6 or abs(lin[1]) > 1e-6 or abs(ang[0]) > 1e-6 or abs(ang[1]) > 1e-6 or abs(ang[2]) > 1e-6:
-                p.resetBaseVelocity(self.body,[0,0,lin[2]],[0,0,0])
+        # Always use base link for clamp mode
+        pos,ori=p.getBasePositionAndOrientation(self.body)
+        lin,ang=p.getBaseVelocity(self.body)
+        # Store Z velocity before any resets
+        vz_preserve = lin[2]
+        # Only clamp if position or orientation has drifted from desired state
+        # Check if position is off X/Y axis or orientation has changed
+        if abs(pos[0]) > 1e-6 or abs(pos[1]) > 1e-6:
+            p.resetBasePositionAndOrientation(self.body,[0,0,pos[2]],self.base_orientation)
+        # Check if velocity has X/Y components or angular velocity - preserve Z velocity
+        if abs(lin[0]) > 1e-6 or abs(lin[1]) > 1e-6 or abs(ang[0]) > 1e-6 or abs(ang[1]) > 1e-6 or abs(ang[2]) > 1e-6:
+            p.resetBaseVelocity(self.body,[0,0,vz_preserve],[0,0,0])
+        # Re-lock all joints every step to ensure parts stay together (wheels, springs don't slide)
+        # This is critical when manually pushing the robot in GUI mode
+        num_joints = p.getNumJoints(self.body)
+        for i in range(num_joints):
+            ji = p.getJointInfo(self.body, i)
+            joint_type = ji[2]
+            if joint_type == p.JOINT_PRISMATIC or joint_type == p.JOINT_REVOLUTE:
+                # Keep joints locked at position 0 with very high force
+                # This prevents parts from sliding away when manually pushed
+                p.setJointMotorControl2(self.body, i, p.POSITION_CONTROL, 
+                                       targetPosition=0, force=1e20)
 
     # ---------- control ----------
     def set_target_height(self,h):
@@ -260,15 +325,25 @@ class Hopper1D:
         # Per proposal: STANCE: m*z_ddot = k(l0 - z) - b*z_dot - mg
         # The spring-damper force (excluding gravity, which PyBullet handles) is:
         # F = k(l0 - z) - b*z_dot
-        # z is the height above ground (should be >= 0, clamped in step())
-        # L is the rest length of the spring (l0)
-        # Spring is active when z < L (compressed)
-        if z>=L: return 0.0
-        # Calculate spring force: F_spring = K*(L-z) when compressed
+        # z is the COM height above ground
+        # L is the rest length of the spring (l0 = L_rest = 0.3m)
+        # When spring tips are at ground (z=0), COM is at z=ground_offset
+        # Spring compression = how much the COM is below its position when tips are at ground
+        # Effective compression = (ground_offset + L_rest) - z
+        # But we use the simpler model: spring is compressed when z < (ground_offset + L_rest)
+        spring_rest_com_height = self.ground_offset + L  # COM height when tips are at ground and spring is at rest
+        if z >= spring_rest_com_height: return 0.0
+        # Calculate spring force: F_spring = K*(compression) when compressed
+        compression = spring_rest_com_height - z
         # Damping force: F_damp = -B*vz (opposes velocity)
         # When vz < 0 (moving down), -B*vz > 0 (pushes up) ✓
         # When vz > 0 (moving up), -B*vz < 0 (pulls down) ✓
-        F = self.K_h*(L-z) - self.B_h*vz
+        F = self.K_h * compression - self.B_h * vz
+        # Add strong repulsive force when spring tips are very close to ground to prevent penetration
+        lowest_z = self._get_lowest_point_z()
+        if lowest_z < 0.01:  # Tips within 1cm of ground
+            penetration_penalty = self.K_h * (0.01 - lowest_z) * 30  # Very strong repulsive force
+            F += penetration_penalty
         # Force must be non-negative (can't pull down through ground)
         F = max(0.0, F)
         return min(F, self.F_peak_guard)
@@ -281,12 +356,21 @@ class Hopper1D:
 
         if self.state==FLIGHT:
             # Detect apex (velocity crosses zero from positive to negative)
-            if getattr(self,'last_vz',0.0)>0 and vz<=0:
+            # BUT only count it as a hop if we've actually landed at least once
+            # This prevents counting oscillations in the air as "hops"
+            if getattr(self,'last_vz',0.0)>0 and vz<=0 and self.has_landed_once:
                 self.apex_history.append((t,z,getattr(self,'F_peak_stance',0.0),self.h_target))
                 self.F_peak_stance=0.0
             # Per proposal: "touchdown when z = l0 with z_dot < 0"
-            if z <= self.L_rest and vz < 0:
+            # But we need to detect when the actual spring tips touch the ground, not the COM
+            # Get the lowest point of the robot (spring tips)
+            lowest_z = self._get_lowest_point_z()
+            # Touchdown when spring tips are very close to ground (within 1.5cm) and moving down
+            # The spring compresses when tips touch ground, so COM will be at L_rest when tips are at ground
+            touchdown_threshold = 0.015  # 1.5cm - spring tips are touching/near ground
+            if lowest_z <= touchdown_threshold and vz < 0:
                 self.state=STANCE; self.stance_t0=t; self.current_u_h=self._calc_u_h()
+                self.has_landed_once = True  # Mark that we've actually landed
         else:
             # STANCE phase: apply spring-damper force
             ts=t-self.stance_t0
@@ -303,15 +387,45 @@ class Hopper1D:
                 self._apply_force(F_contact)
                 self.F_peak_stance=max(getattr(self,'F_peak_stance',0.0),F_contact)
             # Per proposal: "liftoff when spring re-extends to z = l0 with z_dot > 0"
-            if z >= self.L_rest and vz > 0:
+            # OR when contact force becomes zero (spring fully extended)
+            # Get the lowest point of the robot (spring tips)
+            lowest_z = self._get_lowest_point_z()
+            # Liftoff when spring tips have extended back up significantly and moving up
+            # The spring should compress and then extend - wait for proper extension
+            # Use a slightly lower threshold to allow natural spring extension
+            liftoff_threshold = 0.04  # 4cm - spring tips have extended back up
+            if lowest_z > liftoff_threshold and vz > 0:  # Tips are well above ground and moving up
+                self.state=FLIGHT
+            # Also liftoff if force becomes zero (spring fully extended, no contact) and tips are above ground
+            if F_contact <= 0.0 and lowest_z > 0.02:
                 self.state=FLIGHT
 
         p.stepSimulation()
-        # After physics step, clamp z to prevent penetration
+        # After physics step, prevent ground penetration (CRITICAL FIX)
+        # Check if spring tips went below ground, not just COM
         z_after, vz_after = self._get_z_vz()
-        if z_after < 0.0 and self.has_joint:
-            # Reset joint to z=0 if it went negative
-            p.resetJointState(self.body, self.motion_link_idx, targetValue=0.0, targetVelocity=max(0.0, vz_after))
+        lowest_z_after = self._get_lowest_point_z()
+        if lowest_z_after < 0.0:
+            # Spring tips went below ground - reset so tips are at ground level
+            if self.has_joint:
+                # Joint mode: reset joint position
+                p.resetJointState(self.body, self.motion_link_idx, targetValue=0.0, targetVelocity=max(0.0, vz_after))
+            else:
+                # Clamp mode: reset base position so spring tips are at ground (z=0)
+                # If tips are at z=0, then base COM should be at z=ground_offset
+                pos, ori = p.getBasePositionAndOrientation(self.body)
+                target_base_z = self.ground_offset + 0.001  # Tips at 1mm above ground
+                p.resetBasePositionAndOrientation(self.body, [0, 0, target_base_z], ori)
+                # If moving down, reverse to upward velocity to bounce back smoothly
+                # If moving up, keep upward velocity
+                lin, ang = p.getBaseVelocity(self.body)
+                if lin[2] < 0:
+                    # Bouncing back: give it upward velocity based on how far it penetrated
+                    penetration = abs(lowest_z_after)
+                    vz_corrected = min(abs(lin[2]) * 0.5, 2.0)  # Bounce back, cap at 2 m/s
+                else:
+                    vz_corrected = lin[2]  # Keep upward velocity
+                p.resetBaseVelocity(self.body, [0, 0, vz_corrected], [0, 0, 0])
         # Clamp to 1D motion (preserves orientation)
         self._clamp_to_1d()
         self.log_data.append({"t":t,"z":z,"vz":vz,"state":1 if self.state==STANCE else 0,

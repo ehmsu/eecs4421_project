@@ -1,0 +1,47 @@
+corrected_joints_urdf_controller:
+  # Publish all joint states -----------------------------------
+  joint_state_controller:
+    type: joint_state_controller/JointStateController
+    publish_rate: 50
+
+  # Position Controllers --------------------------------------
+  spring_2_sliding_position_controller:
+    type: effort_controllers/JointPositionController
+    joint: spring_2_sliding
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  spring_1_sliding_position_controller:
+    type: effort_controllers/JointPositionController
+    joint: spring_1_sliding
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  wheel_2_to_frame_position_controller:
+    type: effort_controllers/JointPositionController
+    joint: wheel_2_to_frame
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  wheel_1_to_frame_position_controller:
+    type: effort_controllers/JointPositionController
+    joint: wheel_1_to_frame
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  motor_gear_1_revolution_position_controller:
+    type: effort_controllers/JointPositionController
+    joint: motor_gear_1_revolution
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  secondary_gear_revolution_position_controller:
+    type: effort_controllers/JointPositionController
+    joint: secondary_gear_revolution
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  motor_gear_2_revolution_position_controller:
+    type: effort_controllers/JointPositionController
+    joint: motor_gear_2_revolution
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  moving_frame_to_base_link_position_controller:
+    type: effort_controllers/JointPositionController
+    joint: moving_frame_to_base_link
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  main_gear_revolution_position_controller:
+    type: effort_controllers/JointPositionController
+    joint: main_gear_revolution
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  servo_gear_revolution_position_controller:
+    type: effort_controllers/JointPositionController
+    joint: servo_gear_revolution
+    pid: {p: 100.0, i: 0.01, d: 10.0}

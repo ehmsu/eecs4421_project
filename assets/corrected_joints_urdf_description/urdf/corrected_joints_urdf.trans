@@ -1,0 +1,114 @@
+<?xml version="1.0" ?>
+<robot name="corrected_joints_urdf" xmlns:xacro="http://www.ros.org/wiki/xacro" >
+
+<transmission name="spring_2_sliding_tran">
+  <type>transmission_interface/SimpleTransmission</type>
+  <joint name="spring_2_sliding">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+  </joint>
+  <actuator name="spring_2_sliding_actr">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    <mechanicalReduction>1</mechanicalReduction>
+  </actuator>
+</transmission>
+
+<transmission name="spring_1_sliding_tran">
+  <type>transmission_interface/SimpleTransmission</type>
+  <joint name="spring_1_sliding">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+  </joint>
+  <actuator name="spring_1_sliding_actr">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    <mechanicalReduction>1</mechanicalReduction>
+  </actuator>
+</transmission>
+
+<transmission name="wheel_2_to_frame_tran">
+  <type>transmission_interface/SimpleTransmission</type>
+  <joint name="wheel_2_to_frame">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+  </joint>
+  <actuator name="wheel_2_to_frame_actr">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    <mechanicalReduction>1</mechanicalReduction>
+  </actuator>
+</transmission>
+
+<transmission name="wheel_1_to_frame_tran">
+  <type>transmission_interface/SimpleTransmission</type>
+  <joint name="wheel_1_to_frame">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+  </joint>
+  <actuator name="wheel_1_to_frame_actr">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    <mechanicalReduction>1</mechanicalReduction>
+  </actuator>
+</transmission>
+
+<transmission name="motor_gear_1_revolution_tran">
+  <type>transmission_interface/SimpleTransmission</type>
+  <joint name="motor_gear_1_revolution">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+  </joint>
+  <actuator name="motor_gear_1_revolution_actr">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    <mechanicalReduction>1</mechanicalReduction>
+  </actuator>
+</transmission>
+
+<transmission name="secondary_gear_revolution_tran">
+  <type>transmission_interface/SimpleTransmission</type>
+  <joint name="secondary_gear_revolution">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+  </joint>
+  <actuator name="secondary_gear_revolution_actr">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    <mechanicalReduction>1</mechanicalReduction>
+  </actuator>
+</transmission>
+
+<transmission name="motor_gear_2_revolution_tran">
+  <type>transmission_interface/SimpleTransmission</type>
+  <joint name="motor_gear_2_revolution">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+  </joint>
+  <actuator name="motor_gear_2_revolution_actr">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    <mechanicalReduction>1</mechanicalReduction>
+  </actuator>
+</transmission>
+
+<transmission name="moving_frame_to_base_link_tran">
+  <type>transmission_interface/SimpleTransmission</type>
+  <joint name="moving_frame_to_base_link">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+  </joint>
+  <actuator name="moving_frame_to_base_link_actr">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    <mechanicalReduction>1</mechanicalReduction>
+  </actuator>
+</transmission>
+
+<transmission name="main_gear_revolution_tran">
+  <type>transmission_interface/SimpleTransmission</type>
+  <joint name="main_gear_revolution">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+  </joint>
+  <actuator name="main_gear_revolution_actr">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    <mechanicalReduction>1</mechanicalReduction>
+  </actuator>
+</transmission>
+
+<transmission name="servo_gear_revolution_tran">
+  <type>transmission_interface/SimpleTransmission</type>
+  <joint name="servo_gear_revolution">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+  </joint>
+  <actuator name="servo_gear_revolution_actr">
+    <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    <mechanicalReduction>1</mechanicalReduction>
+  </actuator>
+</transmission>
+
+</robot>

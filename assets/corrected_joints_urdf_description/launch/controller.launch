@@ -1,0 +1,9 @@
+<launch>
+
+<rosparam file="$(find corrected_joints_urdf_description)/launch/controller.yaml" command="load"/>
+<node name="controller_spawner" pkg="controller_manager" type="spawner" respawn="false" output="screen" ns="corrected_joints_urdf" args="spring_2_sliding_position_controller spring_1_sliding_position_controller wheel_2_to_frame_position_controller wheel_1_to_frame_position_controller motor_gear_1_revolution_position_controller secondary_gear_revolution_position_controller motor_gear_2_revolution_position_controller moving_frame_to_base_link_position_controller main_gear_revolution_position_controller servo_gear_revolution_position_controller joint_state_controller "/>
+<node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" respawn="false" output="screen">
+  <remap from="/joint_states" to="/corrected_joints_urdf/joint_states"/>
+</node>
+
+</launch>
