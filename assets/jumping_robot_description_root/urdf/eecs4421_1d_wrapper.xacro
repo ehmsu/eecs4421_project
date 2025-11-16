@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<robot name="eecs4421_1d_hopper" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Removed world link - base_link will be fixed base, motion handled via code constraints -->
+  <xacro:include filename="jumping_robot_urdf_backup_copy.xacro" />
+
+  <!-- No joint needed - base_link is the root link and will be fixed in PyBullet -->
+  <!-- 1D motion will be constrained via code using _clamp_to_1d() method -->
+
+</robot>

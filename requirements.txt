@@ -1,3 +1,7 @@
+# FILE: requirements.txt
+# Pin versions for stable builds, especially numpy/matplotlib
+numpy<2.0
+matplotlib<3.9
+pandas
 pybullet
-numpy
-matplotlib
+xacro  # <-- ADD THIS LINE to convert the .xacro file

@@ -1,15 +1,18 @@
-# Python
+# FILE: .gitignore
+# Ignore virtual environments, caches, logs, and generated files
 .venv/
+venv/
 __pycache__/
 *.pyc
 
-# Local runs / artifacts
+# Logs and plots
 logs/
 plots/
-*.png
-*.pdf
 
-# Editors/OS
-.DS_Store
-.vscode/
-.idea/
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Ignore generated URDFs
+assets/jumping_robot/eecs4421_1d_hopper.urdf
