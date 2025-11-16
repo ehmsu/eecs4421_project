@@ -6,8 +6,8 @@
 <xacro:include filename="jumping_robot_urdf_backup_copy.gazebo" />
 <link name="base_link">
   <inertial>
-    <origin xyz="-0.013572089715645304 0.07234958739791485 -0.0004353043515408574" rpy="0 0 0"/>
-    <mass value="0.28240066077211035"/>
+    <origin xyz="-0.013572090010166953 0.07234958657969306 -0.0004353043410476317" rpy="0 0 0"/>
+    <mass value="0.2824006607720704"/>
     <inertia ixx="0.001426" iyy="7.2e-05" izz="0.001359" ixy="-5e-06" iyz="-0.0" ixz="-0.0"/>
   </inertial>
   <visual>
