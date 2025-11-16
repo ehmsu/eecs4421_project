@@ -56,9 +56,9 @@ This project simulates a 1-D vertical hopper robot using PyBullet. The robot is 
 * **Engine:** PyBullet (as recommended by professor - simpler than Gazebo)
 * **Physics:** Hybrid discrete-state simulation (STANCE vs. FLIGHT).
 * **Motion Constraint:** The robot's base link is programmatically clamped to 1D motion (X=0, Y=0, no rotation). This is done via `_clamp_to_1d()` which resets position/velocity drift each timestep. This ensures the robot moves **only vertically** - no horizontal motion, no rotation, no stability issues.
-* **Landing Model:** During STANCE, contact is modeled as a linear spring-damper ($F = K_h(L_{rest} - z) - B_h v_z$) applied at the ground. The spring provides a **soft landing** - it compresses on impact and then extends to push the robot back up. The spring-damper accounts for the actual robot geometry (ground offset from COM to spring tips = 0.093m).
+* **Landing Model:** During STANCE, contact is modeled as a linear spring-damper ($F = K_h((d_g + L_{rest}) - z) - B_h v_z$) applied at the ground, where $d_g = 0.093$ m is the ground offset from COM to spring tips. The spring provides a **soft landing** - it compresses on impact and then extends to push the robot back up. The spring-damper accounts for the actual robot geometry.
 * **Contact Handling:** Collision between the robot base and ground plane is disabled. Contact forces are handled entirely by the custom spring-damper model.
-* **Control:** A Raibert-style apex height regulator. A small "pulse" ($u_h$) is applied during the stance phase to modulate the spring's rest length. This pulse is proportional to the error between the target apex ($h^\star$) and the predicted apex ($\hat{h}_{\text{apex}}$). Note: This is a **1D vertical** application of Raibert's height control - we do not use Raibert's full 3D legged robot control (which includes forward speed and posture control).
+* **Control:** A Raibert-style apex height regulator. A small "pulse" ($u_h$) is applied during the stance phase to modulate the spring's rest length. This pulse is proportional to the error between the target apex ($h^\star$) and the last recorded apex height ($h_{\text{last}}$). Note: This is a **1D vertical** application of Raibert's height control - we do not use Raibert's full 3D legged robot control (which includes forward speed and posture control).
 * **Energy Harvesting:** We are **not** currently modeling energy harvesting from the spring-damper system. The spring is used for soft landing and energy injection via control, but we do not harvest/store energy from the landing impact. A flag (`ENERGY_RECOVERY`) exists in the code, but it is set to `False`.
 
 ## How to Run
@@ -109,7 +109,7 @@ The simulation automatically searches for a `.urdf` file in the `assets/` direct
 
 3. **URDF requirements:**
    * The URDF should have `base_link` as the root link (no "world" link).
-   * The robot will be automatically rotated -90° around the X-axis (wheels up, springs down).
+   * The robot will be automatically rotated -180° around the X-axis (wheels up, springs down).
    * Motion is constrained to 1D via programmatic clamping (no prismatic joint required).
 
 4. **Fallback:** If no URDF is found in the `assets/` directory, the simulation will generate a default fallback model (`assets/mr_springs.urdf`), which is a simple box.
@@ -135,17 +135,17 @@ export STEP_T=5.0
 export H0=0.5
 export H1=0.7
 
-# Control parameters
-export HOP_K=4000          # Spring stiffness (N/m)
-export HOP_B=30            # Damping (N*s/m)
-export HOP_KP=0.30         # Proportional gain for apex control
-export HOP_UH=0.08         # Max control input (m)
-export HOP_LREST=0.30      # Spring rest length (m)
-export HOP_TST=0.15        # Stance time estimate (s)
-export HOP_PSTART=0.10     # Pulse phase start (fraction of stance)
-export HOP_PWIDTH=0.20     # Pulse width (fraction of stance)
-export HOP_FMAX=500.0      # Max force scalar (multiple of m*g)
-export HOP_Z0=0.60         # Initial height (m)
+# Control parameters (defaults shown; these override class defaults if set)
+export HOP_K=4000          # Spring stiffness (N/m) [default: 4000]
+export HOP_B=45            # Damping (N*s/m) [default: 45]
+export HOP_KP=0.30         # Proportional gain for apex control [default: 0.30]
+export HOP_UH=0.08         # Max control input (m) [default: 0.08]
+export HOP_LREST=0.30      # Spring rest length (m) [default: 0.30]
+export HOP_TST=0.055       # Stance time estimate (s) [default: 0.055]
+export HOP_PSTART=0.25     # Pulse phase start (fraction of stance) [default: 0.25]
+export HOP_PWIDTH=0.50     # Pulse width (fraction of stance) [default: 0.50]
+export HOP_FMAX=500.0      # Max force scalar (multiple of m*g) [default: 500.0]
+export HOP_Z0=0.60         # Initial height (m) [default: 0.80]
 ```
 
 ## Project Structure
@@ -184,9 +184,9 @@ The robot uses "clamp mode" where:
 ### Spring-Damper Model
 
 During STANCE phase:
-- Spring force: $F_{spring} = K_h (L_{rest} - z)$
+- Spring force: $F_{spring} = K_h ((d_g + L_{rest}) - z)$ where $d_g = 0.093$ m is the ground offset
 - Damping force: $F_{damp} = -B_h v_z$
-- Total force: $F = F_{spring} + F_{damp}$ (clamped to be non-negative)
+- Total force: $F = F_{spring} + F_{damp}$ (clamped to be non-negative, capped at $F_{\max} = 500mg$)
 - Applied to the base link in the +Z direction (upward)
 
 ### State Machine
@@ -197,10 +197,10 @@ During STANCE phase:
 ### Control Law
 
 The Raibert-style height controller:
-- Predicts next apex: $\hat{h}_{\text{apex}} = h + \frac{v_z^2}{2g}$
-- Computes error: $e = h^\star - \hat{h}_{\text{apex}}$
-- Applies control: $u_h = k_{raibert} \cdot e$ (clamped to $[-u_{h,max}, u_{h,max}]$)
-- Modulates spring rest length: $L_{eff} = L_{rest} + u_h$ during pulse window
+- Uses last recorded apex height: $h_{\text{last}}$ (from previous hop)
+- Computes error: $e = h^\star - h_{\text{last}}$
+- Applies control: $u_h = k_{raibert} \cdot e$ (clamped to $[0, u_{h,max}]$)
+- Modulates spring rest length: $L_{eff} = L_{rest} + u_h$ during pulse window (25-75% of stance duration)
 
 ## Notes
 
