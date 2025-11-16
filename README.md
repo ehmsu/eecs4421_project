@@ -10,24 +10,56 @@ This project simulates a 1-D vertical hopper robot using PyBullet. The robot is 
 - Two spring-loaded rods with springs at the bottom
 - Various mechanical components (gears, motors, frames, etc.)
 
-**Orientation:** The robot is oriented with wheels at the top (Z+) and springs pointing downward (Z-), rotated -90° around the X-axis from the original CAD model.
+**Orientation:** The robot is oriented with wheels at the top (Z+) and springs pointing downward (Z-), rotated -180° around the X-axis from the original CAD model.
+
+## Addressing Professor Feedback
+
+### (I) Vehicle Definition and Control Parameters
+
+**Vehicle:** This is a **1D vertical hopper** based on a compressed spring mechanism. The robot jumps **purely vertically** (no horizontal locomotion).
+
+**Wheels:** The wheels are **passive and NOT used for locomotion**. They are purely visual/structural elements. The robot does NOT use wheels for movement - it only hops vertically. This is important to clarify: unlike Raibert's legged robots (which use legs for locomotion), our robot uses wheels only for visual alignment in a hypothetical "ring world" - the actual locomotion is purely vertical jumping.
+
+**Control Parameters:**
+- Spring stiffness: $K_h = 4000$ N/m
+- Damping: $B_h = 45$ N·s/m
+- Rest length: $L_{rest} = 0.30$ m
+- Raibert gain: $k_{raibert} = 0.30$
+- Max control input: $u_{h,max} = 0.08$ m
+- Target apex height: $h^\star$ (adjustable, default 0.80 m)
+
+**Landing Model:** We model landing using a **linear spring-damper** system. During STANCE phase, the spring provides a soft landing and stores energy. The spring compresses on impact and then extends to push the robot back up. We are **NOT currently modeling energy harvesting** - the spring-damper is used purely for soft landing and energy injection via the Raibert control pulse. (The `ENERGY_RECOVERY` flag exists in code but is set to `False`.)
+
+### (II) Physics Engine Choice
+
+**We are using PyBullet** (not Gazebo), as recommended. PyBullet provides a simpler, more efficient physics engine that is well-suited for this 1D vertical hopping task.
+
+### (III) Stability and Wheel Configuration
+
+**Stability:** Since this is a **strictly 1D vertical hopper** (constrained to vertical motion only), stability is not an issue. The robot is programmatically clamped to move only along the Z-axis (X=0, Y=0, no rotation). Therefore, we do not need to deal with vehicle stability, pitch, roll, or balance.
+
+**Wheel Configuration:** We use two wheels (not four) because:
+1. The wheels are passive and not used for locomotion
+2. The robot is constrained to 1D vertical motion, so stability is not a concern
+3. The wheels serve only as visual/structural elements
+4. A four-wheeled configuration would add unnecessary complexity for a 1D task
 
 ## V1 Project Scope (1-Dimensional)
 
-**Addressing Professor Feedback:** This V1 simulation is **strictly 1-dimensional** (vertical motion along the Z-axis).
+**This V1 simulation is strictly 1-dimensional** (vertical motion along the Z-axis).
 * The robot is constrained to vertical motion only using programmatic clamping.
 * Wheels are **passive and not used for locomotion** or balance in this V1. They only serve to visually align the robot in a hypothetical "ring world."
 * Future V2 work might explore 2-D planar motion, but that is explicitly out of scope for this version.
 
 ## Core Physics & Control
 
-* **Engine:** PyBullet
+* **Engine:** PyBullet (as recommended by professor - simpler than Gazebo)
 * **Physics:** Hybrid discrete-state simulation (STANCE vs. FLIGHT).
-* **Motion Constraint:** The robot's base link is programmatically clamped to 1D motion (X=0, Y=0, no rotation). This is done via `_clamp_to_1d()` which resets position/velocity drift each timestep.
-* **Landing Model:** During STANCE, contact is modeled as a linear spring-damper ($F = K_h(L_{rest} - z) - B_h v_z$) applied at the ground ($z=0$, relative to the spring's rest length $L_{rest}=0.30$ m).
+* **Motion Constraint:** The robot's base link is programmatically clamped to 1D motion (X=0, Y=0, no rotation). This is done via `_clamp_to_1d()` which resets position/velocity drift each timestep. This ensures the robot moves **only vertically** - no horizontal motion, no rotation, no stability issues.
+* **Landing Model:** During STANCE, contact is modeled as a linear spring-damper ($F = K_h(L_{rest} - z) - B_h v_z$) applied at the ground. The spring provides a **soft landing** - it compresses on impact and then extends to push the robot back up. The spring-damper accounts for the actual robot geometry (ground offset from COM to spring tips = 0.093m).
 * **Contact Handling:** Collision between the robot base and ground plane is disabled. Contact forces are handled entirely by the custom spring-damper model.
-* **Control:** A Raibert-style apex height regulator. A small "pulse" ($u_h$) is applied during the stance phase to modulate the spring's rest length. This pulse is proportional to the error between the target apex ($h^\star$) and the predicted apex ($\hat{h}_{\text{apex}}$).
-* **Energy Harvesting:** We are **not** currently modeling energy harvesting from the spring-damper system. A flag (`ENERGY_RECOVERY`) exists in the code, but it is set to `False`.
+* **Control:** A Raibert-style apex height regulator. A small "pulse" ($u_h$) is applied during the stance phase to modulate the spring's rest length. This pulse is proportional to the error between the target apex ($h^\star$) and the predicted apex ($\hat{h}_{\text{apex}}$). Note: This is a **1D vertical** application of Raibert's height control - we do not use Raibert's full 3D legged robot control (which includes forward speed and posture control).
+* **Energy Harvesting:** We are **not** currently modeling energy harvesting from the spring-damper system. The spring is used for soft landing and energy injection via control, but we do not harvest/store energy from the landing impact. A flag (`ENERGY_RECOVERY`) exists in the code, but it is set to `False`.
 
 ## How to Run
 
