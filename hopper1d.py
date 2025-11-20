@@ -95,15 +95,14 @@ class Hopper1D:
                                jointLowerLimit=0, jointUpperLimit=0)
 
         # Model/Control (tuned for stable, consistent hopping)
-        # Spring stiffness: moderate for stable hopping (~12-14 Hz natural frequency)
-        # Damping: increased to allow longer stance phase and smoother bouncing
-        self.K_h=4000.0; self.B_h=45.0; self.L_rest=0.30
+        # Spring stiffness: moderate for stable hopping
+        # Damping: tuned for stable hopping behavior
+        self.K_h=3500.0; self.B_h=120.0; self.L_rest=0.30
         self.h_target=0.80; self.k_raibert=0.30; self.u_h_max=0.08
-        # Stance time estimate: tuned to match actual stance duration (~0.05-0.06s)
-        self.T_stance_estimate=0.055; self.pulse_phase_start=0.25; self.pulse_width=0.50
-        # Increase F_max_scalar significantly to allow sufficient force for hopping
-        # At z=-0.1, L=0.3, force = K*(L-z) = 4000*0.4 = 1600N needed
-        self.F_max_scalar=500.0; self.F_peak_guard=self.F_max_scalar*self.mass*9.81
+        # Stance time estimate: tuned to match actual stance duration
+        self.T_stance_estimate=0.12; self.pulse_phase_start=0.12; self.pulse_width=0.20
+        # Force guard: conservative limit to prevent excessive forces
+        self.F_max_scalar=20.0; self.F_peak_guard=self.F_max_scalar*self.mass*9.81
         self.ENERGY_RECOVERY=False
 
         self.state=FLIGHT; self.last_vz=0.0; self.stance_t0=0.0
