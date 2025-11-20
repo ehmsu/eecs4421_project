@@ -411,14 +411,17 @@ class Hopper1D:
                 # Disturbance period ended, stop applying force
                 self.disturbance_force = [0.0, 0.0, 0.0]
 
-        # Check if robot is tipped (before state check, so we can enable collisions)
-        pos_check, ori_check = p.getBasePositionAndOrientation(self.body)
-        euler_check = p.getEulerFromQuaternion(ori_check)
-        tilt_angle_check = np.sqrt(euler_check[0]**2 + euler_check[1]**2)
-        max_tilt_check = np.pi / 6  # 30 degrees
-        horizontal_drift_check = np.sqrt(pos_check[0]**2 + pos_check[1]**2)
-        max_drift_check = 0.5  # 50cm
-        is_tipped_check = tilt_angle_check >= max_tilt_check or horizontal_drift_check >= max_drift_check
+        # Check if robot is tipped (only when disturbance is applied or has been applied)
+        # This prevents false positives during normal 1D hopping
+        is_tipped_check = False
+        if self.disturbance_applied:
+            pos_check, ori_check = p.getBasePositionAndOrientation(self.body)
+            euler_check = p.getEulerFromQuaternion(ori_check)
+            tilt_angle_check = np.sqrt(euler_check[0]**2 + euler_check[1]**2)
+            max_tilt_check = np.pi / 6  # 30 degrees
+            horizontal_drift_check = np.sqrt(pos_check[0]**2 + pos_check[1]**2)
+            max_drift_check = 0.5  # 50cm
+            is_tipped_check = tilt_angle_check >= max_tilt_check or horizontal_drift_check >= max_drift_check
         
         if is_tipped_check and not self.has_tipped:
             # Just tipped - enable collisions with ground for pure physics
@@ -454,18 +457,23 @@ class Hopper1D:
         else:
             # STANCE phase: apply spring-damper force
             # But only if robot is not too tilted (for realistic animation)
+            # Only check for tipping if disturbance is applied
             pos, ori = p.getBasePositionAndOrientation(self.body)
-            # Check if robot is too tilted (angular displacement from base orientation)
-            euler = p.getEulerFromQuaternion(ori)
-            tilt_angle = np.sqrt(euler[0]**2 + euler[1]**2)  # Roll and pitch angles
-            max_tilt = np.pi / 6  # 30 degrees - if tilted more than this, stop hopping
+            tilt_angle = 0.0
+            horizontal_drift = 0.0
+            max_tilt = np.pi / 6  # 30 degrees
+            max_drift = 0.5  # 50cm
             
-            # Also check horizontal drift - if too far displaced, stop hopping
-            horizontal_drift = np.sqrt(pos[0]**2 + pos[1]**2)
-            max_drift = 0.5  # 50cm - if drifted more than this, stop hopping
+            if self.disturbance_applied:
+                # Check if robot is too tilted (angular displacement from base orientation)
+                euler = p.getEulerFromQuaternion(ori)
+                tilt_angle = np.sqrt(euler[0]**2 + euler[1]**2)  # Roll and pitch angles
+                # Also check horizontal drift - if too far displaced, stop hopping
+                horizontal_drift = np.sqrt(pos[0]**2 + pos[1]**2)
             
             # Only apply spring force if robot is reasonably upright and not too displaced
-            if tilt_angle < max_tilt and horizontal_drift < max_drift:
+            # (or if no disturbance is applied, always apply spring force)
+            if (not self.disturbance_applied) or (tilt_angle < max_tilt and horizontal_drift < max_drift):
                 ts=t-self.stance_t0
                 p0=self.pulse_phase_start*self.T_stance_estimate
                 p1=p0+self.pulse_width*self.T_stance_estimate

@@ -63,8 +63,8 @@ def main():
             # Count hops before applying disturbance
             if not disturbance_applied:
                 hops_before_disturbance = len(sim.apex_history)
-                # Apply disturbance after robot has hopped at least once and is in flight or stance
-                if hops_before_disturbance >= 1 and i >= disturbance_step:
+                # Only apply disturbance if force > 0 and after robot has hopped at least once
+                if args.force > 0.0 and hops_before_disturbance >= 1 and i >= disturbance_step:
                     # Apply during a hop - check if robot is in stance or just after landing
                     if sim.state == 1 or (sim.state == 0 and sim.has_landed_once):  # STANCE or FLIGHT after landing
                         if args.direction == 'x':
