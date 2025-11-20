@@ -30,18 +30,18 @@ class Hopper1D:
             deterministicOverlappingPairs=1  # Deterministic for reproducibility
         )
         self.plane = p.loadURDF("plane.urdf")
-        # Optimize ground plane - minimal contact properties since we handle contact via spring-damper
+        # Ground plane properties - will be used when robot tips (collisions enabled)
+        # For normal 1D hopping, collisions are disabled and we use spring-damper model
         p.changeDynamics(self.plane, -1, 
-                        lateralFriction=0.0,  # No friction needed (1D motion)
-                        restitution=0.0, 
-                        contactStiffness=1e4,  # Reduced for efficiency
-                        contactDamping=50)     # Reduced for efficiency
+                        lateralFriction=0.5,  # Some friction for natural sliding/rolling when tipped
+                        restitution=0.3,      # Some bounce for natural physics when tipped
+                        contactStiffness=1e4,  # Contact stiffness
+                        contactDamping=50)     # Contact damping
 
         self.body, self.motion_mode, self.motion_link_idx, self.has_joint = self._load_robot()
         self.mass = self._infer_mass(self.body, self.motion_link_idx)
-        # Store the desired orientation (wheels at top, springs at bottom pointing down)
-        # Rotate -180° around X-axis to flip the model
-        self.base_orientation = p.getQuaternionFromEuler([-3.14159, 0, 0])
+        # Store the base orientation (-180° rotation around Z axis to turn robot around)
+        self.base_orientation = p.getQuaternionFromEuler([0, 0, -np.pi])
         # Calculate the offset from base COM to the lowest point of the robot (spring tips)
         # This is needed to detect actual ground contact
         self._calculate_ground_offset()
@@ -113,6 +113,14 @@ class Hopper1D:
         # Track if we've had a real stance phase (landed) before counting apex
         # This prevents counting oscillations in the air as "hops"
         self.has_landed_once = False
+        # Disturbance testing: track horizontal drift and recovery
+        self.disturbance_applied = False
+        self.disturbance_force = [0.0, 0.0, 0.0]  # [Fx, Fy, Fz] - horizontal pushes
+        self.disturbance_time = None
+        self.max_drift = 0.0  # Maximum horizontal drift from origin
+        self.recovery_time = None  # Time to return to within threshold of origin
+        # Track if robot has tipped over - once tipped, stop hopping permanently
+        self.has_tipped = False
 
     # ---------- loading ----------
     def _find_first_urdf(self):
@@ -155,10 +163,10 @@ class Hopper1D:
             # New structure without world link - base_link is root
             # Use useFixedBase=False so robot can move, then clamp to 1D in code
             use_fixed = False
-            # Rotate -180° around X-axis to flip the model
-            base_orientation = p.getQuaternionFromEuler([-3.14159, 0, 0])
+            # -180° rotation around Z axis to turn robot around
+            base_orientation = p.getQuaternionFromEuler([0, 0, -np.pi])
             body=p.loadURDF(urdf_path,useFixedBase=use_fixed,baseOrientation=base_orientation,flags=p.URDF_USE_INERTIA_FROM_FILE)
-            logging.info(f"Loaded URDF: {urdf_path} (useFixedBase=False, rotated -180° X: wheels at top, springs at bottom, clamp mode)")
+            logging.info(f"Loaded URDF: {urdf_path} (useFixedBase=False, no rotation, clamp mode)")
         except Exception as e:
             logging.error(f"URDF load failed: {urdf_path} -> {e}; using fallback.")
             fb="assets/mr_springs.urdf"; Path(fb).write_text(self._fallback_urdf_text())
@@ -287,20 +295,55 @@ class Hopper1D:
             # This works for clamp mode
             p.applyExternalForce(self.body, -1, [0,0,fz], [0,0,0], p.WORLD_FRAME)
 
-    def _clamp_to_1d(self):
+    def apply_disturbance(self, force_x=0.0, force_y=0.0, duration=0.1):
+        """Apply a horizontal disturbance force (push) to test robustness.
+        
+        Args:
+            force_x: Force in X direction (N)
+            force_y: Force in Y direction (N)
+            duration: How long to apply the force (s)
+        """
+        self.disturbance_force = [force_x, force_y, 0.0]
+        self.disturbance_duration = duration
+        self.disturbance_applied = True
+        self.disturbance_time = None  # Will be set when first applied
+        self.max_drift = 0.0
+        self.recovery_time = None
+        logging.info(f"Disturbance scheduled: Fx={force_x:.2f}N, Fy={force_y:.2f}N, duration={duration:.3f}s")
+
+    def _clamp_to_1d(self, allow_drift=False):
+        """Clamp robot to 1D motion. If allow_drift=True, track drift but don't reset it (for disturbance testing)."""
         if self.motion_mode!="clamp": return
         # Always use base link for clamp mode
         pos,ori=p.getBasePositionAndOrientation(self.body)
         lin,ang=p.getBaseVelocity(self.body)
         # Store Z velocity before any resets
         vz_preserve = lin[2]
-        # Only clamp if position or orientation has drifted from desired state
-        # Check if position is off X/Y axis or orientation has changed
-        if abs(pos[0]) > 1e-6 or abs(pos[1]) > 1e-6:
-            p.resetBasePositionAndOrientation(self.body,[0,0,pos[2]],self.base_orientation)
-        # Check if velocity has X/Y components or angular velocity - preserve Z velocity
-        if abs(lin[0]) > 1e-6 or abs(lin[1]) > 1e-6 or abs(ang[0]) > 1e-6 or abs(ang[1]) > 1e-6 or abs(ang[2]) > 1e-6:
-            p.resetBaseVelocity(self.body,[0,0,vz_preserve],[0,0,0])
+        
+        # Track horizontal drift for disturbance testing
+        horizontal_drift = np.sqrt(pos[0]**2 + pos[1]**2)
+        if horizontal_drift > self.max_drift:
+            self.max_drift = horizontal_drift
+        
+        # Check if recovered (drift < 0.01m threshold)
+        # Note: recovery check happens in step() where we have access to time t
+        
+        # Only clamp if not allowing drift (normal operation)
+        if not allow_drift:
+            # Only clamp if position or orientation has drifted from desired state
+            # Check if position is off X/Y axis or orientation has changed
+            if abs(pos[0]) > 1e-6 or abs(pos[1]) > 1e-6:
+                p.resetBasePositionAndOrientation(self.body,[0,0,pos[2]],self.base_orientation)
+            # Check if velocity has X/Y components or angular velocity - preserve Z velocity
+            if abs(lin[0]) > 1e-6 or abs(lin[1]) > 1e-6 or abs(ang[0]) > 1e-6 or abs(ang[1]) > 1e-6 or abs(ang[2]) > 1e-6:
+                p.resetBaseVelocity(self.body,[0,0,vz_preserve],[0,0,0])
+        else:
+            # When allowing drift (disturbance testing), don't reset position/orientation
+            # But still preserve Z velocity for vertical hopping
+            # Only reset if Z velocity is being affected by horizontal motion
+            # Actually, let it continue naturally - don't interfere with the displacement
+            pass
+        
         # Re-lock all joints every step to ensure parts stay together (wheels, springs don't slide)
         # This is critical when manually pushing the robot in GUI mode
         num_joints = p.getNumJoints(self.body)
@@ -353,39 +396,102 @@ class Hopper1D:
         # Clamp z to prevent negative values (ground is at z=0)
         z = max(0.0, z)
         u_h_applied=0.0; F_contact=0.0
+        
+        # Apply disturbance force if scheduled
+        if self.disturbance_applied and (self.disturbance_force[0] != 0.0 or self.disturbance_force[1] != 0.0):
+            if self.disturbance_time is None:
+                self.disturbance_time = t
+            elapsed = t - self.disturbance_time
+            if elapsed < self.disturbance_duration:
+                # Apply horizontal force to base link
+                p.applyExternalForce(self.body, -1, 
+                                   [self.disturbance_force[0], self.disturbance_force[1], 0.0],
+                                   [0, 0, 0], p.WORLD_FRAME)
+            else:
+                # Disturbance period ended, stop applying force
+                self.disturbance_force = [0.0, 0.0, 0.0]
 
+        # Check if robot is tipped (before state check, so we can enable collisions)
+        pos_check, ori_check = p.getBasePositionAndOrientation(self.body)
+        euler_check = p.getEulerFromQuaternion(ori_check)
+        tilt_angle_check = np.sqrt(euler_check[0]**2 + euler_check[1]**2)
+        max_tilt_check = np.pi / 6  # 30 degrees
+        horizontal_drift_check = np.sqrt(pos_check[0]**2 + pos_check[1]**2)
+        max_drift_check = 0.5  # 50cm
+        is_tipped_check = tilt_angle_check >= max_tilt_check or horizontal_drift_check >= max_drift_check
+        
+        if is_tipped_check and not self.has_tipped:
+            # Just tipped - enable collisions with ground for pure physics
+            self.has_tipped = True
+            # Re-enable collisions between robot and ground plane for natural physics
+            p.setCollisionFilterPair(self.body, self.plane, -1, -1, enableCollision=1)
+            num_joints = p.getNumJoints(self.body)
+            for i in range(-1, num_joints):
+                p.setCollisionFilterPair(self.body, self.plane, i, -1, enableCollision=1)
+        
         if self.state==FLIGHT:
-            # Detect apex (velocity crosses zero from positive to negative)
-            # BUT only count it as a hop if we've actually landed at least once
-            # This prevents counting oscillations in the air as "hops"
-            if getattr(self,'last_vz',0.0)>0 and vz<=0 and self.has_landed_once:
-                self.apex_history.append((t,z,getattr(self,'F_peak_stance',0.0),self.h_target))
-                self.F_peak_stance=0.0
-            # Per proposal: "touchdown when z = l0 with z_dot < 0"
-            # But we need to detect when the actual spring tips touch the ground, not the COM
-            # Get the lowest point of the robot (spring tips)
-            lowest_z = self._get_lowest_point_z()
-            # Touchdown when spring tips are very close to ground (within 1.5cm) and moving down
-            # The spring compresses when tips touch ground, so COM will be at L_rest when tips are at ground
-            touchdown_threshold = 0.015  # 1.5cm - spring tips are touching/near ground
-            if lowest_z <= touchdown_threshold and vz < 0:
-                self.state=STANCE; self.stance_t0=t; self.current_u_h=self._calc_u_h()
-                self.has_landed_once = True  # Mark that we've actually landed
+            # If robot has tipped, don't allow any more hopping - just let it fall
+            if self.has_tipped:
+                F_contact = 0.0
+            else:
+                # Detect apex (velocity crosses zero from positive to negative)
+                # BUT only count it as a hop if we've actually landed at least once
+                # This prevents counting oscillations in the air as "hops"
+                if getattr(self,'last_vz',0.0)>0 and vz<=0 and self.has_landed_once:
+                    self.apex_history.append((t,z,getattr(self,'F_peak_stance',0.0),self.h_target))
+                    self.F_peak_stance=0.0
+                # Per proposal: "touchdown when z = l0 with z_dot < 0"
+                # But we need to detect when the actual spring tips touch the ground, not the COM
+                # Get the lowest point of the robot (spring tips)
+                lowest_z = self._get_lowest_point_z()
+                # Touchdown when spring tips are very close to ground (within 1.5cm) and moving down
+                # The spring compresses when tips touch ground, so COM will be at L_rest when tips are at ground
+                touchdown_threshold = 0.015  # 1.5cm - spring tips are touching/near ground
+                # Only allow touchdown if robot hasn't tipped
+                if lowest_z <= touchdown_threshold and vz < 0 and not self.has_tipped:
+                    self.state=STANCE; self.stance_t0=t; self.current_u_h=self._calc_u_h()
+                    self.has_landed_once = True  # Mark that we've actually landed
         else:
             # STANCE phase: apply spring-damper force
-            ts=t-self.stance_t0
-            p0=self.pulse_phase_start*self.T_stance_estimate
-            p1=p0+self.pulse_width*self.T_stance_estimate
-            L=self.L_rest
-            if p0<ts<p1:
-                L=self.L_rest+self.current_u_h
-                u_h_applied=self.current_u_h
-            # Apply spring-damper force when compressed (z < L)
-            # Per proposal: F = k(l0 - z) - b*z_dot during STANCE
-            F_contact=self._spring_damper(z,vz,L)
-            if F_contact>0:
-                self._apply_force(F_contact)
-                self.F_peak_stance=max(getattr(self,'F_peak_stance',0.0),F_contact)
+            # But only if robot is not too tilted (for realistic animation)
+            pos, ori = p.getBasePositionAndOrientation(self.body)
+            # Check if robot is too tilted (angular displacement from base orientation)
+            euler = p.getEulerFromQuaternion(ori)
+            tilt_angle = np.sqrt(euler[0]**2 + euler[1]**2)  # Roll and pitch angles
+            max_tilt = np.pi / 6  # 30 degrees - if tilted more than this, stop hopping
+            
+            # Also check horizontal drift - if too far displaced, stop hopping
+            horizontal_drift = np.sqrt(pos[0]**2 + pos[1]**2)
+            max_drift = 0.5  # 50cm - if drifted more than this, stop hopping
+            
+            # Only apply spring force if robot is reasonably upright and not too displaced
+            if tilt_angle < max_tilt and horizontal_drift < max_drift:
+                ts=t-self.stance_t0
+                p0=self.pulse_phase_start*self.T_stance_estimate
+                p1=p0+self.pulse_width*self.T_stance_estimate
+                L=self.L_rest
+                if p0<ts<p1:
+                    L=self.L_rest+self.current_u_h
+                    u_h_applied=self.current_u_h
+                # Apply spring-damper force when compressed (z < L)
+                # Per proposal: F = k(l0 - z) - b*z_dot during STANCE
+                F_contact=self._spring_damper(z,vz,L)
+                if F_contact>0:
+                    self._apply_force(F_contact)
+                    self.F_peak_stance=max(getattr(self,'F_peak_stance',0.0),F_contact)
+            else:
+                # Robot is too tilted or displaced - stop applying spring force, let it fall
+                F_contact = 0.0
+                # Mark as tipped and transition to FLIGHT so it falls naturally
+                if not self.has_tipped:
+                    # Just tipped - enable collisions with ground for pure physics
+                    self.has_tipped = True
+                    # Re-enable collisions between robot and ground plane for natural physics
+                    p.setCollisionFilterPair(self.body, self.plane, -1, -1, enableCollision=1)
+                    num_joints = p.getNumJoints(self.body)
+                    for i in range(-1, num_joints):
+                        p.setCollisionFilterPair(self.body, self.plane, i, -1, enableCollision=1)
+                self.state = FLIGHT
             # Per proposal: "liftoff when spring re-extends to z = l0 with z_dot > 0"
             # OR when contact force becomes zero (spring fully extended)
             # Get the lowest point of the robot (spring tips)
@@ -402,34 +508,61 @@ class Hopper1D:
 
         p.stepSimulation()
         # After physics step, prevent ground penetration (CRITICAL FIX)
+        # Always prevent penetration so robot bounces on ground, even when tipped
+        pos, ori = p.getBasePositionAndOrientation(self.body)
+        euler = p.getEulerFromQuaternion(ori)
+        tilt_angle = np.sqrt(euler[0]**2 + euler[1]**2)
+        max_tilt = np.pi / 6  # 30 degrees
+        is_tipped = tilt_angle >= max_tilt
+        
         # Check if spring tips went below ground, not just COM
         z_after, vz_after = self._get_z_vz()
         lowest_z_after = self._get_lowest_point_z()
-        if lowest_z_after < 0.0:
-            # Spring tips went below ground - reset so tips are at ground level
-            if self.has_joint:
-                # Joint mode: reset joint position
-                p.resetJointState(self.body, self.motion_link_idx, targetValue=0.0, targetVelocity=max(0.0, vz_after))
-            else:
-                # Clamp mode: reset base position so spring tips are at ground (z=0)
-                # If tips are at z=0, then base COM should be at z=ground_offset
-                pos, ori = p.getBasePositionAndOrientation(self.body)
-                target_base_z = self.ground_offset + 0.001  # Tips at 1mm above ground
-                p.resetBasePositionAndOrientation(self.body, [0, 0, target_base_z], ori)
-                # If moving down, reverse to upward velocity to bounce back smoothly
-                # If moving up, keep upward velocity
-                lin, ang = p.getBaseVelocity(self.body)
-                if lin[2] < 0:
-                    # Bouncing back: give it upward velocity based on how far it penetrated
-                    penetration = abs(lowest_z_after)
-                    vz_corrected = min(abs(lin[2]) * 0.5, 2.0)  # Bounce back, cap at 2 m/s
+        # When tipped, use pure physics - let PyBullet handle everything naturally
+        if self.has_tipped or is_tipped:
+            # Pure physics mode: no manual intervention at all
+            # Let PyBullet's collision system handle ground contact naturally
+            # Skip 1D clamping entirely - let it move freely in 3D space
+            pass
+        else:
+            # Normal operation: prevent ground penetration and clamp to 1D
+            if lowest_z_after < 0.0:
+                # Spring tips went below ground - reset so tips are at ground level
+                if self.has_joint:
+                    # Joint mode: reset joint position
+                    p.resetJointState(self.body, self.motion_link_idx, targetValue=0.0, targetVelocity=max(0.0, vz_after))
                 else:
-                    vz_corrected = lin[2]  # Keep upward velocity
-                p.resetBaseVelocity(self.body, [0, 0, vz_corrected], [0, 0, 0])
-        # Clamp to 1D motion (preserves orientation)
-        self._clamp_to_1d()
+                    # Clamp mode: reset base position so lowest point is just above ground
+                    current_base_z = pos[2]
+                    offset_from_base_to_lowest = current_base_z - lowest_z_after
+                    target_base_z = 0.001 + offset_from_base_to_lowest
+                    
+                    # Preserve horizontal position and orientation if testing disturbances
+                    if self.disturbance_applied and (self.disturbance_time is None or t >= self.disturbance_time):
+                        p.resetBasePositionAndOrientation(self.body, [pos[0], pos[1], target_base_z], ori)
+                    else:
+                        p.resetBasePositionAndOrientation(self.body, [0, 0, target_base_z], self.base_orientation)
+                    # If moving down, reverse to upward velocity to bounce back smoothly
+                    lin, ang = p.getBaseVelocity(self.body)
+                    if lin[2] < 0:
+                        vz_corrected = min(abs(lin[2]) * 0.5, 2.0)  # Bounce back, cap at 2 m/s
+                    else:
+                        vz_corrected = lin[2]  # Keep upward velocity
+                    # Preserve horizontal velocity and angular velocity if testing disturbances
+                    if self.disturbance_applied and (self.disturbance_time is None or t >= self.disturbance_time):
+                        p.resetBaseVelocity(self.body, [lin[0], lin[1], vz_corrected], ang)
+                    else:
+                        p.resetBaseVelocity(self.body, [0, 0, vz_corrected], [0, 0, 0])
+            # Clamp to 1D motion (normal operation)
+            allow_drift = self.disturbance_applied and (self.disturbance_time is None or t < self.disturbance_time + self.disturbance_duration + 2.0)
+            self._clamp_to_1d(allow_drift=allow_drift)
+        # Get horizontal position for disturbance tracking
+        pos, _ = p.getBasePositionAndOrientation(self.body)
+        horizontal_drift = np.sqrt(pos[0]**2 + pos[1]**2)
+        
         self.log_data.append({"t":t,"z":z,"vz":vz,"state":1 if self.state==STANCE else 0,
-                              "u_h_applied":u_h_applied,"F_contact":F_contact,"h_target":self.h_target})
+                              "u_h_applied":u_h_applied,"F_contact":F_contact,"h_target":self.h_target,
+                              "drift":horizontal_drift})
         self.last_vz=vz
 
     # ---------- I/O ----------
@@ -449,7 +582,10 @@ class Hopper1D:
     def quick_plots(self, show=True, save=False, path="logs/plot.png"):
         if not self.log_data: return
         d={k:[r[k] for r in self.log_data] for k in self.log_data[0]}; t=d["t"]
-        fig,axs=plt.subplots(5,1,figsize=(10,14),sharex=True)
+        # Check if drift data exists (for disturbance tests)
+        has_drift = "drift" in d
+        num_plots = 6 if has_drift else 5
+        fig,axs=plt.subplots(num_plots,1,figsize=(10,14+2 if has_drift else 14),sharex=True)
         axs[0].plot(t,d["z"]); axs[0].plot(t,d["h_target"],"r--"); axs[0].set_ylabel("z [m]"); axs[0].grid(True)
         if self.apex_history:
             ap_t=[a[0] for a in self.apex_history]; ap_h=[a[1] for a in self.apex_history]
@@ -457,7 +593,18 @@ class Hopper1D:
         axs[1].plot(t,d["vz"]); axs[1].set_ylabel("vz [m/s]"); axs[1].grid(True)
         axs[2].plot(t,d["state"],"m"); axs[2].set_ylabel("state"); axs[2].set_ylim(-0.1,1.1); axs[2].grid(True)
         axs[3].plot(t,d["u_h_applied"],"c"); axs[3].set_ylabel("u_h [m]"); axs[3].grid(True)
-        axs[4].plot(t,d["F_contact"],"orange"); axs[4].set_ylabel("F [N]"); axs[4].set_xlabel("t [s]"); axs[4].grid(True)
+        axs[4].plot(t,d["F_contact"],"orange"); axs[4].set_ylabel("F [N]"); axs[4].grid(True)
+        if has_drift:
+            axs[5].plot(t,d["drift"],"r"); axs[5].set_ylabel("Horizontal drift [m]"); axs[5].set_xlabel("t [s]"); axs[5].grid(True)
+            if hasattr(self, 'recovery_time') and self.recovery_time is not None and hasattr(self, 'disturbance_time') and self.disturbance_time is not None:
+                axs[5].axvline(x=self.disturbance_time + self.recovery_time, color='g', linestyle='--', label='Recovery')
+            if hasattr(self, 'disturbance_time') and self.disturbance_time is not None:
+                axs[5].axvline(x=self.disturbance_time, color='orange', linestyle='--', label='Disturbance')
+                if hasattr(self, 'disturbance_duration'):
+                    axs[5].axvline(x=self.disturbance_time + self.disturbance_duration, color='orange', linestyle='--')
+            axs[5].legend()
+        else:
+            axs[4].set_xlabel("t [s]")
         fig.suptitle("Hopper 1-D Summary"); plt.tight_layout()
         if save: Path(path).parent.mkdir(parents=True, exist_ok=True); plt.savefig(path,dpi=160)
         # only show if GUI mode; backend is Agg so this is harmless if headless

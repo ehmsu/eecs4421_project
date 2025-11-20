@@ -10,7 +10,7 @@ This project simulates a 1-D vertical hopper robot using PyBullet. The robot is 
 - Two spring-loaded rods with springs at the bottom
 - Various mechanical components (gears, motors, frames, etc.)
 
-**Orientation:** The robot is oriented with wheels at the top (Z+) and springs pointing downward (Z-), rotated -180° around the X-axis from the original CAD model.
+**Orientation:** The robot loads as designed from the URDF with no rotation applied.
 
 ## Addressing Professor Feedback
 
@@ -109,7 +109,7 @@ The simulation automatically searches for a `.urdf` file in the `assets/` direct
 
 3. **URDF requirements:**
    * The URDF should have `base_link` as the root link (no "world" link).
-   * The robot will be automatically rotated -180° around the X-axis (wheels up, springs down).
+   * The robot loads as designed with no rotation applied.
    * Motion is constrained to 1D via programmatic clamping (no prismatic joint required).
 
 4. **Fallback:** If no URDF is found in the `assets/` directory, the simulation will generate a default fallback model (`assets/mr_springs.urdf`), which is a simple box.
