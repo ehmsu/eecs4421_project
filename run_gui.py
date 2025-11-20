@@ -21,7 +21,7 @@ def main():
 
     sim = Hopper1D(mode=mode)
 
-    # --- Read tunables from environment (fallbacks = reasonable conservative defaults) ---
+    # --- Read tunables from environment (fallbacks = tuned for stable hopping) ---
     sim.K_h = float(os.getenv("HOP_K", "3500"))          # N/m
     sim.B_h = float(os.getenv("HOP_B", "120"))           # N*s/m
     sim.k_raibert = float(os.getenv("HOP_KP", "0.30"))   # proportional on apex error

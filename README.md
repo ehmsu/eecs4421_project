@@ -10,7 +10,7 @@ This project simulates a 1-D vertical hopper robot using PyBullet. The robot is 
 - Two spring-loaded rods with springs at the bottom
 - Various mechanical components (gears, motors, frames, etc.)
 
-**Orientation:** The robot loads as designed from the URDF with no rotation applied.
+**Orientation:** The robot loads with the correct orientation (springs at bottom, wheels at top) as designed in the URDF.
 
 ## Addressing Professor Feedback
 
@@ -21,8 +21,8 @@ This project simulates a 1-D vertical hopper robot using PyBullet. The robot is 
 **Wheels:** The wheels are **passive and NOT used for locomotion**. They are purely visual/structural elements. The robot does NOT use wheels for movement - it only hops vertically. This is important to clarify: unlike Raibert's legged robots (which use legs for locomotion), our robot uses wheels only for visual alignment in a hypothetical "ring world" - the actual locomotion is purely vertical jumping.
 
 **Control Parameters:**
-- Spring stiffness: $K_h = 4000$ N/m
-- Damping: $B_h = 45$ N·s/m
+- Spring stiffness: $K_h = 3500$ N/m
+- Damping: $B_h = 120$ N·s/m
 - Rest length: $L_{rest} = 0.30$ m
 - Raibert gain: $k_{raibert} = 0.30$
 - Max control input: $u_{h,max} = 0.08$ m
@@ -56,7 +56,7 @@ This project simulates a 1-D vertical hopper robot using PyBullet. The robot is 
 * **Engine:** PyBullet (as recommended by professor - simpler than Gazebo)
 * **Physics:** Hybrid discrete-state simulation (STANCE vs. FLIGHT).
 * **Motion Constraint:** The robot's base link is programmatically clamped to 1D motion (X=0, Y=0, no rotation). This is done via `_clamp_to_1d()` which resets position/velocity drift each timestep. This ensures the robot moves **only vertically** - no horizontal motion, no rotation, no stability issues.
-* **Landing Model:** During STANCE, contact is modeled as a linear spring-damper ($F = K_h((d_g + L_{rest}) - z) - B_h v_z$) applied at the ground, where $d_g = 0.093$ m is the ground offset from COM to spring tips. The spring provides a **soft landing** - it compresses on impact and then extends to push the robot back up. The spring-damper accounts for the actual robot geometry.
+* **Landing Model:** During STANCE, contact is modeled as a linear spring-damper ($F = K_h((d_g + L_{rest}) - z) - B_h v_z$) applied at the ground, where $d_g$ is the ground offset from COM to spring tips (calculated dynamically from AABBs, typically ~0.17 m). The spring provides a **soft landing** - it compresses on impact and then extends to push the robot back up. The spring-damper accounts for the actual robot geometry.
 * **Contact Handling:** Collision between the robot base and ground plane is disabled. Contact forces are handled entirely by the custom spring-damper model.
 * **Control:** A Raibert-style apex height regulator. A small "pulse" ($u_h$) is applied during the stance phase to modulate the spring's rest length. This pulse is proportional to the error between the target apex ($h^\star$) and the last recorded apex height ($h_{\text{last}}$). Note: This is a **1D vertical** application of Raibert's height control - we do not use Raibert's full 3D legged robot control (which includes forward speed and posture control).
 * **Energy Harvesting:** We are **not** currently modeling energy harvesting from the spring-damper system. The spring is used for soft landing and energy injection via control, but we do not harvest/store energy from the landing impact. A flag (`ENERGY_RECOVERY`) exists in the code, but it is set to `False`.
@@ -96,11 +96,24 @@ This repository is designed to be run on a Linux (Ubuntu) system with Python 3.1
    python3 run_gui.py --headless
    ```
 
+4. **Test disturbance rejection:**
+   ```bash
+   # GUI mode - visualize robot response to horizontal pushes
+   python3 test_disturbances_gui.py --force 1.0 --direction x
+   python3 test_disturbances_gui.py --force 2.0 --direction x
+   
+   # Headless mode - batch testing
+   python3 test_disturbances.py --force 1.0 --direction x
+   python3 test_disturbances.py --sweep  # Test multiple force magnitudes
+   ```
+   
+   The disturbance tests apply horizontal forces to the robot during hopping to test robustness. If the robot tips (roll/pitch > 30° or horizontal drift > 0.5 m), it will stop hopping and fall naturally.
+
 ## Using Your Own URDF Model
 
 The simulation automatically searches for a `.urdf` file in the `assets/` directory.
 
-1. **Current model:** The simulation uses `assets/jumping_robot_description_root/eecs4421_1d_hopper.urdf`, which is generated from xacro files in `assets/jumping_robot_description_root/urdf/`.
+1. **Current model:** The simulation automatically loads the first `.urdf` file found in `assets/` (currently `assets/corrected_joints_urdf_description/eecs4421_1d_hopper.urdf`). Alternative models are available in `assets/jumping_robot_description_root/`.
 
 2. **To use your model:** 
    * Place your URDF file (and any meshes) in the `assets/` directory.
@@ -109,7 +122,7 @@ The simulation automatically searches for a `.urdf` file in the `assets/` direct
 
 3. **URDF requirements:**
    * The URDF should have `base_link` as the root link (no "world" link).
-   * The robot loads as designed with no rotation applied.
+   * The robot loads with the correct orientation (springs at bottom, wheels at top).
    * Motion is constrained to 1D via programmatic clamping (no prismatic joint required).
 
 4. **Fallback:** If no URDF is found in the `assets/` directory, the simulation will generate a default fallback model (`assets/mr_springs.urdf`), which is a simple box.
@@ -136,16 +149,16 @@ export H0=0.5
 export H1=0.7
 
 # Control parameters (defaults shown; these override class defaults if set)
-export HOP_K=4000          # Spring stiffness (N/m) [default: 4000]
-export HOP_B=45            # Damping (N*s/m) [default: 45]
+export HOP_K=3500          # Spring stiffness (N/m) [default: 3500]
+export HOP_B=120           # Damping (N*s/m) [default: 120]
 export HOP_KP=0.30         # Proportional gain for apex control [default: 0.30]
 export HOP_UH=0.08         # Max control input (m) [default: 0.08]
 export HOP_LREST=0.30      # Spring rest length (m) [default: 0.30]
-export HOP_TST=0.055       # Stance time estimate (s) [default: 0.055]
-export HOP_PSTART=0.25     # Pulse phase start (fraction of stance) [default: 0.25]
-export HOP_PWIDTH=0.50     # Pulse width (fraction of stance) [default: 0.50]
-export HOP_FMAX=500.0      # Max force scalar (multiple of m*g) [default: 500.0]
-export HOP_Z0=0.60         # Initial height (m) [default: 0.80]
+export HOP_TST=0.12        # Stance time estimate (s) [default: 0.12]
+export HOP_PSTART=0.12     # Pulse phase start (fraction of stance) [default: 0.12]
+export HOP_PWIDTH=0.20     # Pulse width (fraction of stance) [default: 0.20]
+export HOP_FMAX=20.0       # Max force scalar (multiple of m*g) [default: 20.0]
+export HOP_Z0=0.60         # Initial height (m) [default: 0.60]
 ```
 
 ## Project Structure
@@ -154,21 +167,26 @@ export HOP_Z0=0.60         # Initial height (m) [default: 0.80]
 eecs4421_project/
 ├── hopper1d.py              # Main simulation class
 ├── run_gui.py               # GUI launcher script
+├── test_disturbances.py     # Headless disturbance testing
+├── test_disturbances_gui.py # GUI disturbance testing
+├── eval_metrics.py          # Evaluation metrics
+├── sweep.py                 # Parameter sweep utilities
 ├── requirements.txt         # Python dependencies
 ├── README.md               # This file
 ├── assets/                 # Robot models
-│   └── jumping_robot_description_root/
-│       ├── eecs4421_1d_hopper.urdf  # Generated URDF
-│       ├── meshes/         # STL mesh files
-│       └── urdf/           # Xacro source files
-│           ├── eecs4421_1d_wrapper.xacro
-│           ├── jumping_robot_urdf_backup_copy.xacro
-│           ├── jumping_robot_urdf_backup_copy.trans
-│           └── materials.xacro
+│   ├── corrected_joints_urdf_description/  # Primary URDF (loaded by default)
+│   │   ├── eecs4421_1d_hopper.urdf
+│   │   ├── meshes/         # STL mesh files
+│   │   └── urdf/           # Xacro source files
+│   └── jumping_robot_description_root/     # Alternative URDF
+│       ├── eecs4421_1d_hopper.urdf
+│       ├── meshes/
+│       └── urdf/
 └── logs/                   # Simulation logs and plots
     ├── run1.csv
     ├── run1_apex.csv
-    └── run1_plots.png
+    ├── run1_plots.png
+    └── disturbances/       # Disturbance test results
 ```
 
 ## Implementation Details
@@ -184,15 +202,25 @@ The robot uses "clamp mode" where:
 ### Spring-Damper Model
 
 During STANCE phase:
-- Spring force: $F_{spring} = K_h ((d_g + L_{rest}) - z)$ where $d_g = 0.093$ m is the ground offset
+- Spring force: $F_{spring} = K_h ((d_g + L_{rest}) - z)$ where $d_g$ is the ground offset (calculated dynamically, typically ~0.17 m)
 - Damping force: $F_{damp} = -B_h v_z$
-- Total force: $F = F_{spring} + F_{damp}$ (clamped to be non-negative, capped at $F_{\max} = 500mg$)
+- Total force: $F = F_{spring} + F_{damp}$ (clamped to be non-negative, capped at $F_{\max} = 20mg$)
 - Applied to the base link in the +Z direction (upward)
+- Ground offset is calculated using AABBs (Axis-Aligned Bounding Boxes) to find the lowest point of the robot geometry (spring tips)
 
 ### State Machine
 
 - **FLIGHT:** Ballistic motion under gravity. Apex is detected when velocity crosses zero from positive to negative.
 - **STANCE:** Contact with ground. Spring-damper force is applied. Raibert control pulse is injected during mid-stance.
+
+### Disturbance Testing
+
+The simulation supports testing the robot's robustness to horizontal disturbances:
+- **Disturbance application:** Horizontal forces can be applied via `apply_disturbance()` method
+- **Drift tracking:** The robot tracks horizontal drift and recovery time when disturbed
+- **Tipping detection:** If the robot tips (roll/pitch > 30° or horizontal drift > 0.5 m), it permanently stops hopping and falls naturally
+- **Natural falling:** When tipped, the robot transitions to pure physics mode - no spring forces, no ground penetration prevention - allowing realistic falling behavior
+- **Test scripts:** `test_disturbances.py` (headless) and `test_disturbances_gui.py` (visual) provide convenient interfaces for testing
 
 ### Control Law
 
@@ -200,10 +228,13 @@ The Raibert-style height controller:
 - Uses last recorded apex height: $h_{\text{last}}$ (from previous hop)
 - Computes error: $e = h^\star - h_{\text{last}}$
 - Applies control: $u_h = k_{raibert} \cdot e$ (clamped to $[0, u_{h,max}]$)
-- Modulates spring rest length: $L_{eff} = L_{rest} + u_h$ during pulse window (25-75% of stance duration)
+- Modulates spring rest length: $L_{eff} = L_{rest} + u_h$ during pulse window (12-32% of stance duration)
 
 ## Notes
 
-- The robot model currently only shows `base_link` in simulation because the `.trans` file is empty. Once the 3D modeling person exports the complete URDF from Fusion 360 with all parts defined, the full robot assembly will appear.
+- The robot model displays all components from the URDF (full assembly visible).
 - The simulation uses a timestep of 1/240 seconds (240 Hz).
 - Contact stiffness and damping are reduced to allow the custom spring-damper model to dominate contact forces.
+- All joints (prismatic and revolute) are locked with high force to ensure the robot moves as one rigid body.
+- Ground offset is calculated dynamically using AABBs to accurately detect contact at the spring tips.
+- When testing disturbances, the robot can drift horizontally and tip over. Once tipped, it stops hopping permanently and falls naturally to demonstrate realistic failure behavior.
