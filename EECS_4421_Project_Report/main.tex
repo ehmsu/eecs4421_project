@@ -85,7 +85,7 @@ To inform our design, we reviewed several existing jumping robots, which reveale
 
 On the other end of the spectrum, consumer toys and hobbyist projects (Parrot MiniDrone Jumping Sumo, Wonder Wheels RC Bounce Car, Basement Creations Jumping Robot) share a two-wheeled design with spring-loaded latch mechanisms. In these real-world robots, wheels provide stability; in our 1-D simulation, wheels are passive.
 
-Raibert's hopper \cite{raibert1986legged} regulates height with stance energy injection. We isolate only the vertical height regulation component, omitting fore--aft speed and body attitude control, and combine Raibert's energy injection with a spring--damper contact model.
+Finally, Raibert's hopper \cite{raibert1986legged} offers a foundational model for continuous dynamic locomotion. The robot consists of a weighted body atop a pneumatic telescoping leg connected via a pivoting hip. Its control architecture simplifies the dynamics by decoupling the system into three independent servo control loops: vertical height, forward speed, and attitude/posture.
 
 \section{Core Concepts}
 
