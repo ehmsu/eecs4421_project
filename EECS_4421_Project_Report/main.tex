@@ -1,0 +1,399 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx}
+\usepackage[labelfont=bf]{caption}
+\usepackage{subcaption}
+\usepackage{siunitx}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{float}
+
+\graphicspath{{./}{./logs/}{./logs/disturbances/}{/mnt/data/}}
+
+\sisetup{detect-all = true, per-mode = symbol}
+
+\title{\textbf{EECS 4421 Project Report}\\[2pt]
+Mr.\ Springs: A 1-D Jumping Robot (Simulation First)}
+
+\author{
+\begin{tabular}{@{}ll@{}}
+\textbf{Name} & \textbf{Student ID} \\
+\midrule
+Leroy Musa & 219198761 \\
+Kiet Le    & 218052787 \\
+Amely Su   & 220041554 \\
+\end{tabular}
+}
+
+\date{}
+
+\begin{document}
+
+\newgeometry{top=0.5in, left=1in, right=1in, bottom=1in} % smaller top margin on first page
+
+\maketitle
+
+
+\vspace{-1.0em}
+
+\hrule
+
+\vspace{0.75em}
+
+\begin{center}
+{\large \textbf{Codebase GitHub link:} \url{https://github.com/ehmsu/eecs4421_project}}
+\end{center}
+
+\vspace{0.75em}
+
+\section*{Abstract}
+
+We design and simulate a 1-D vertical hopper in PyBullet that regulates apex height using a Raibert-style stance pulse controller. The robot uses a spring--damper contact model with a two-state machine (\textsc{FLIGHT}/\textsc{STANCE}) for ground interaction. At touchdown, we compute error between the last recorded apex height and target, injecting a bounded pulse during 12--32\% of stance. The controller achieves \SI{0.551}{m} mean apex for a \SI{0.5}{m} target (10.2\% overshoot) but only \SI{0.536}{m} for a \SI{0.7}{m} target (23.4\% steady-state error). The robot demonstrates zero robustness to horizontal disturbances; any non-zero force causes failure, with forces $\geq 2$~\si{N} causing immediate tipping.
+
+\section{Introduction}
+
+\textbf{Motivation.} Wheeled robots struggle on discontinuous terrain. Controlled jumping can bridge gaps and traverse obstacles; a simple vertical hopper is a tractable first step.
+
+\noindent\textbf{Problem Statement.} Build a simulated hopper that can achieve commanded jump heights using compliant vertical interaction and a simple stance pulse.
+
+\paragraph{Vehicle Definition and Scope.}
+
+We implement a 1-D vertical hopper based on a compressed spring mechanism. The robot is modeled as a rigid body with a virtual spring--damper contact model for compliant vertical interaction. The wheels in the CAD model are passive visual/structural elements only; they provide no locomotion. Motion is constrained to 1-D (vertical only), eliminating stability concerns. Unlike Raibert's legged robots which use legs for forward locomotion and posture control, our system performs purely vertical jumping with no horizontal motion.
+
+\paragraph{Control Parameters and Landing Model.}
+
+Control parameters: spring stiffness $K_h = \SI{3500}{N/m}$, damping $B_h = \SI{120}{N.s/m}$, Raibert gain $k = 0.30$, maximum pulse $u_{h,\max} = \SI{0.08}{m}$, and stance window (12--32\% of estimated stance duration). Landing is modeled using the spring--damper system for soft landing and energy injection via control. We do not model energy harvesting from the landing impact; energy is injected solely through the control pulse.
+
+\paragraph{Physics Engine Choice.}
+
+Following the instructor's recommendation, we use PyBullet (not Gazebo) for its simplicity and efficiency in 1-D vertical hopping simulations.
+
+\noindent\textbf{Scope \& Objectives.} (i) Create a working 3-D model and import to PyBullet; (ii) constrain motion to 1-D ($z$ only); (iii) implement a robust contact model and two-state machine; (iv) regulate apex height with a step test; (v) test disturbance rejection; (vi) report quantitative performance.
+
+\noindent\textbf{Report Overview.} We summarize existing solutions, describe modeling and control, then present results and discussion.
+
+\section{Existing Solutions}
+
+To inform our design, we reviewed several existing jumping robots, which revealed a wide spectrum of complexity and mechanisms. At the high-performance end, robots like Boston Dynamics' Sand Flea utilize a powerful, gas-powered (CO\textsubscript{2}) piston to achieve extraordinary jump heights of up to 30 feet, demonstrating a high-power, non-elastic solution. Other complex designs, like the AgileX T-Rex, use a sophisticated wheel-leg hybrid system that allows for more of a ``leap'' (around \SI{10}{cm}) as part of its hybrid locomotion, rather than a single, powerful jump.
+
+On the other end of the spectrum, consumer toys and hobbyist projects (Parrot MiniDrone Jumping Sumo, Wonder Wheels RC Bounce Car, Basement Creations Jumping Robot) share a two-wheeled design with spring-loaded latch mechanisms. In these real-world robots, wheels provide stability; in our 1-D simulation, wheels are passive.
+
+Raibert's hopper \cite{raibert1986legged} regulates height with stance energy injection. We isolate only the vertical height regulation component, omitting fore--aft speed and body attitude control, and combine Raibert's energy injection with a spring--damper contact model.
+
+\section{Core Concepts}
+
+The robot's jumping action relies on energy conversion: elastic potential energy (spring compression) $\to$ kinetic energy $\to$ gravitational potential energy (height). Ground contact is modeled using a virtual spring--damper system during \textsc{STANCE}; during \textsc{FLIGHT}, the robot travels ballistically under gravity. Key design challenges: (1) tuning $K_h$ and $B_h$ for stable hopping, and (2) designing a controller that injects sufficient energy during the limited stance window (12--32\%) to reach target heights.
+
+
+\section{Modeling and Contact}
+
+\subsection{CAD Model and URDF Creation}
+
+To create the URDF file which was used in our PyBullet simulations (referenced in the Implementation Pseudocode), we created a CAD model by modifying the Basement Creations Jumping Robot in the following ways:
+
+\begin{itemize}
+\item \textbf{Removing unnecessary components} from the original design, which included parts of the frame and spring-loaded mechanism;
+\item \textbf{Merging components} such as the frame, motor, and brakes to create combined components;
+\item \textbf{Creating rigid, revolute, and slider joints} between components to mimic intended motion.
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{finalised_drawing_v1.pdf}
+  \caption{Exploded view of the Mr.\ Springs CAD model showing all components and joints.}
+  \label{fig:cad_exploded}
+\end{figure}
+
+The resulting CAD file was then given to the fusion2urdf script to create the finalised URDF.
+
+\subsection{Rigid body and joint locking}
+
+All revolute/prismatic joints are locked via \texttt{setJointMotorControl2} in \texttt{POSITION\_CONTROL} with a very large force (\SI{1e20}{N}), making the assembly effectively rigid.
+
+\subsection{Model and simulation snapshots}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}{0.40\textwidth}
+    \includegraphics[width=\linewidth]{ground.png}
+    \caption{Near touchdown, just entering \textsc{STANCE}.}
+  \end{subfigure}\hfill
+  \begin{subfigure}{0.43\textwidth}
+    \includegraphics[width=\linewidth]{apex.png}
+    \caption{Near apex in \textsc{FLIGHT}.}
+  \end{subfigure}
+  \caption{PyBullet snapshots of the Mr.\ Springs 1-D hopper during a jump.}
+  \label{fig:pb_snapshots}
+\end{figure}
+
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}{0.35\textwidth}
+    \includegraphics[width=\linewidth]{bot1.png}
+  \end{subfigure}\hfill
+  \begin{subfigure}{0.35\textwidth}
+    \includegraphics[width=\linewidth]{bot2.png}
+  \end{subfigure}
+  \caption{Close-up of the Mr.\ Springs CAD model used to generate the URDF.}
+  \label{fig:cad}
+\end{figure}
+
+\subsection{1-D clamping}
+
+Each simulation step we reset $x{=}y{=}0$, zero angular velocity, and \emph{preserve} vertical velocity $\dot z$ so the system is strictly 1-D in translation.
+
+\paragraph{Stability.}
+
+In nominal 1-D tests, \texttt{\_clamp\_to\_1d()} keeps the base strictly vertical, eliminating stability concerns. For disturbance experiments, we disable clamping to allow horizontal drift and tipping. The instructor suggested a four-wheeled skid-steer vehicle maintaining parallel body attitude for future work.
+
+\subsection{Ground offset $d_g$}
+
+We compute the lowest point of the assembly from per-link AABBs. Let $z_{\min}$ be the minimum $z$ over all AABBs and $z_{\text{COM}}$ the COM height. The constant ground offset is
+
+\[
+d_g \;=\; z_{\text{COM}} - z_{\min},
+\]
+
+so the spring tips are at height $z_{\text{tip}} = z - d_g$.
+
+\subsection{Contact state machine}
+
+We use thresholds that match the implementation:
+
+\begin{align*}
+\textsc{FLIGHT} \to \textsc{STANCE} &: \quad z_{\text{tip}} \le \SI{0.015}{m} \;\text{ and }\; \dot z<0,\\
+\textsc{STANCE} \to \textsc{FLIGHT} &: \quad \big(z_{\text{tip}} > \SI{0.04}{m} \text{ and }\dot z>0\big)\;\;\text{or}\;\; F_{\text{contact}}\le 0.
+\end{align*}
+
+\subsection{Spring--damper contact and penalty}
+
+During \textsc{STANCE} the vertical dynamics are
+
+\begin{equation}
+m\ddot z \;=\; F_{\text{spring}} - mg,
+\end{equation}
+
+with
+
+\begin{equation}
+F_{\text{spring}} \;=\; K_h\,\Delta z \;-\; B_h\,\dot z,
+\qquad
+\Delta z \;\equiv\; (d_g + L) - z,
+\end{equation}
+
+where $L=L_{\rm rest}+u_h$ is the effective rest length including the stance pulse $u_h$ (bounded below). To prevent numerical penetration when tips are very close to the ground we add a repulsive penalty:
+
+\[
+F_{\text{penalty}} \;=\;
+\begin{cases}
+30\,K_h\,(0.01 - z_{\text{tip}}), & z_{\text{tip}} < \SI{0.01}{m},\\
+0, & \text{otherwise.}
+\end{cases}
+\]
+
+The applied contact force is capped by a guard $F \leq F_{\max} = 20mg$. 
+
+\paragraph{Energy harvesting (not implemented).}
+
+We do not model energy harvesting from the landing impact. The spring--damper provides soft landing and energy injection via control only; no energy is recovered from landing for subsequent hops. This is left as future work.
+
+\section{Controller}
+
+\subsection{Apex detection}
+
+We record an apex when $\dot z$ crosses from positive to non-positive \emph{after the robot has landed at least once}. A boolean flag \texttt{has\_landed\_once} prevents counting initial in-air oscillations.
+
+\subsection{Error signal and stance pulse (as implemented)}
+
+At touchdown we compute the error using the \emph{last recorded apex height} $h_{\text{last}}$:
+
+\begin{equation}
+e_h \;=\; h^\star - h_{\text{last}},
+\qquad
+u_h \;=\; \operatorname{clip}\!\big(k\,e_h,\,0,\,u_{h,\max}\big),
+\end{equation}
+
+and apply $u_h$ in a fixed stance window from $\alpha=0.12$ to $\alpha+\beta=0.32$ of the estimated stance duration $T_s$ (i.e., 12--32\% of stance). Parameters used in our runs:
+
+\[
+K_h=\SI{3500}{N/m},\;
+B_h=\SI{120}{N.s/m},\;
+L_{\rm rest}=\SI{0.30}{m},\;
+k=\num{0.30},\;
+u_{h,\max}=\SI{0.08}{m},\;
+T_s=\SI{0.12}{s},\;
+\alpha=\num{0.12},\;
+\beta=\num{0.20}.
+\]
+
+\paragraph{Penetration prevention on correction reset.}
+
+If a step advances into penetration ($z_{\text{tip}}<0$), we reset the base so tips are \SI{1}{mm} above ground. If the vertical velocity is downward, we reflect it with a damping factor and cap:
+
+\[
+\dot z^{+} \;=\; \min\!\big(0.5\,|\dot z^{-}|,\; \SI{2}{m/s}\big).
+\]
+
+If already moving upward, we keep $\dot z$ unchanged.
+
+\paragraph{Note on alternative (not implemented).}
+
+A predicted-apex controller would use $\hat h = z + \dot z^2/(2g)$ at the touchdown event; we leave this as future work.
+
+\section{Implementation Pseudocode}
+
+\begin{algorithm}[H]
+\caption{Main loop (1-D hopper)}
+\begin{algorithmic}[1]
+\State Clamp to 1-D: set $x{=}y{=}0$, zero angular rates, keep $\dot z$.
+\State Compute $z_{\text{tip}} = z - d_g$; update state by the thresholds above.
+\If{\textsc{FLIGHT}$\to$\textsc{STANCE}}
+  \State $e_h \gets h^\star - h_{\text{last}}$ (or $h_{\text{start}}$ if none)
+  \State $u_h \gets \operatorname{clip}(k\,e_h, 0, u_{h,\max})$
+  \State $t_0 \gets t$  \Comment{stance start time}
+\EndIf
+\If{state = \textsc{STANCE}}
+  \State apply $L\gets L_{\rm rest}+u_h$ on $t\in[t_0+\alpha T_s,\;t_0+(\alpha+\beta)T_s]$
+  \State $F \gets K_h((d_g{+}L)-z) - B_h \dot z$ \textbf{+ penalty}, guard by $F_{\max}$
+\EndIf
+\State Step simulation; if penetration persists, perform bounce fix (above).
+\State Detect apex on $\dot z\!:\!+\to 0$ with \texttt{has\_landed\_once}.
+\end{algorithmic}
+\end{algorithm}
+
+\section{Results}
+
+\subsection{Step test: \(\;h^\star:\; \SI{0.5}{m}\to\SI{0.7}{m}\) at \(t=\SI{5}{s}\)}
+
+Figure~\ref{fig:summary} shows height $z$, velocity, state, applied stance pulse $u_h$, contact force, and the target $h^\star$.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.45\textwidth]{run1_plots.png}
+  \caption{Hopper 1-D summary for the step test.}
+  \label{fig:summary}
+\end{figure}
+
+From the run above, the system achieves stable hopping with mean apex heights of \SI{0.551}{m} (std: \SI{0.034}{m}) for the \SI{0.5}{m} target and \SI{0.536}{m} (std: \SI{0.013}{m}) for the \SI{0.7}{m} target. The controller successfully tracks the lower target with slight overshoot, but underperforms for the higher target, indicating insufficient energy injection capability.
+
+\begin{table}[H]
+\centering
+\caption{Step response metrics (current controller).}
+\label{tab:metrics}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Initial target $h^\star_{\text{init}}$ & \SI{0.5}{m} \\
+Final target $h^\star_{\text{final}}$ & \SI{0.7}{m} \\
+Mean apex (initial)                    & \SI{0.551}{m} (std: \SI{0.034}{m}) \\
+Mean apex (final)                      & \SI{0.536}{m} (std: \SI{0.013}{m}) \\
+Overshoot (initial)                    & \SI{10.2}{\percent} \\
+Steady-state error (final)             & \SI{0.164}{m} (\SI{23.4}{\percent}) \\
+Number of hops (initial)               & 7 \\
+Number of hops (final)                 & 11 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Disturbance Rejection Testing}
+
+We tested the robot's response to horizontal disturbances by applying forces from \SI{0.5}{N} to \SI{100}{N} during normal hopping. Only the baseline (\SI{0.0}{N}) maintains stable hopping; all non-zero forces cause failure.
+
+\subsubsection{Disturbance Application and Failure Modes}
+
+Horizontal disturbances are applied as external forces $\bm{F}_d = [F_{d,x}, F_{d,y}, 0]^T$ at the robot's base link for $\Delta t_d = \SI{0.1}{s}$ at $t_d = \SI{3.0}{s}$ (after stable hopping is established). When disturbances are applied, 1-D clamping is disabled, allowing horizontal drift $d_{\text{drift}} = \sqrt{x^2 + y^2}$.
+
+The robot fails due to: (1) no active horizontal control, (2) torque-induced tipping from moment arms, (3) disrupted vertical dynamics when tilted, and (4) coupling between horizontal and vertical motion. Tipping is detected when tilt angle $\theta_{\text{tilt}} = \sqrt{\phi^2 + \psi^2} \geq \SI{30}{\degree}$ or drift $d_{\text{drift}} \geq \SI{0.5}{m}$.
+
+When tipped, the robot transitions to ``pure physics mode'': collisions are re-enabled, clamping is removed, spring-damper forces are disabled, and the robot falls naturally with PyBullet's collision response (restitution $e=0.3$, friction $\mu=0.5$).
+
+\begin{table}[H]
+\centering
+\caption{Disturbance rejection test results.}
+\label{tab:disturbance}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Force & Max Drift & Hops After Disturbance & Outcome \\
+\midrule
+\SI{0.0}{N} & \SI{0.000}{m} & 26 hops (baseline) & Stable \\
+\SI{0.5}{N} & \SI{0.034}{m} & Stops hopping & Failure \\
+\SI{1.0}{N} & \SI{0.033}{m} & Stops hopping & Failure \\
+\SI{1.5}{N} & \SI{0.032}{m} & Stops hopping & Failure \\
+\SI{2.0}{N} & \SI{0.031}{m} & 0 hops (tips immediately) & Failure \\
+\SI{10.0}{N} & \SI{0.095}{m} & 0 hops (tips immediately) & Failure \\
+\SI{100.0}{N} & \SI{4.30}{m} & 0 hops (tips immediately) & Failure \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The baseline (\SI{0.0}{N}) maintains stable hopping (26 hops over \SI{11.7}{s}). Any non-zero force causes failure: small forces (\SIrange{0.5}{2.0}{N}) cause \SIrange{0.031}{0.034}{m} drift before tipping; forces $\geq 2$~\si{N} cause immediate tipping.
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}{0.32\textwidth}
+    \includegraphics[width=\linewidth]{disturb_0.0N_x_gui_plots.png}
+    \caption{\SI{0.0}{N}: Stable hopping.}
+  \end{subfigure}\hfill
+  \begin{subfigure}{0.32\textwidth}
+    \includegraphics[width=\linewidth]{disturb_0.5N_x_gui_plots.png}
+    \caption{\SI{0.5}{N}: Stops hopping.}
+  \end{subfigure}\hfill
+  \begin{subfigure}{0.32\textwidth}
+    \includegraphics[width=\linewidth]{disturb_1.0N_x_gui_plots.png}
+    \caption{\SI{1.0}{N}: Stops hopping.}
+  \end{subfigure}
+  
+  \vspace{0.5em}
+  
+  \begin{subfigure}{0.32\textwidth}
+    \includegraphics[width=\linewidth]{disturb_2.0N_x_gui_plots.png}
+    \caption{\SI{2.0}{N}: Tips immediately.}
+  \end{subfigure}\hfill
+  \begin{subfigure}{0.32\textwidth}
+    \includegraphics[width=\linewidth]{disturb_10.0N_x_gui_plots.png}
+    \caption{\SI{10.0}{N}: Tips immediately.}
+  \end{subfigure}\hfill
+  \begin{subfigure}{0.32\textwidth}
+    \includegraphics[width=\linewidth]{disturb_100.0N_x_gui_plots.png}
+    \caption{\SI{100.0}{N}: Extreme tipping.}
+  \end{subfigure}
+  
+  \caption{Disturbance rejection test results for various force magnitudes. Only the baseline case (\SI{0.0}{N}) maintains stable hopping; all non-zero forces cause failure. Forces $\geq 2$~\si{N} cause immediate tipping.}
+  \label{fig:disturbance}
+\end{figure}
+
+
+\section{Discussion \& Future Work}
+
+\subsection{Discussion}
+
+Key learnings: (1) Spring-damper tuning ($K_h = \SI{3500}{N/m}$, $B_h = \SI{120}{N.s/m}$) required balancing energy storage against oscillation damping. (2) The narrow stance window (12--32\%) and conservative force guard ($F_{\max} = 20mg$) limited energy injection, causing \SI{23.4}{\percent} steady-state error at \SI{0.7}{m} target. (3) Using $h_{\text{last}}$ instead of predicted apex simplified implementation but limited performance when targets changed mid-flight. (4) The 1-D constraint eliminated stability concerns but resulted in zero robustness to horizontal disturbances.
+
+\subsection{Future Work}
+
+Priority improvements: (1) CAD model: Experiment with weight distribution and material properties. (2) Simulation: Unlock revolute/rigid/slider joints to study full 3-D dynamics. (3) Controller: Replace $h_{\text{last}}$ with predicted apex $\hat h = z + \dot z^2/(2g)$, optimize stance window (e.g., 40--60\%), and implement adaptive $T_s$ tuning. (4) Disturbance rejection: Add active horizontal control or wider base; implement self-righting mechanism. (5) Extensions: Develop 2-D planar hopper; embed into four-wheeled skid-steer vehicle per instructor suggestion. (6) Hardware: Build physical prototype for validation.
+
+\section{Conclusion}
+
+We implemented a Raibert-style stance pulse controller for 1-D vertical hopping. The controller tracks a \SI{0.5}{m} target with 10.2\% overshoot but underperforms at \SI{0.7}{m} (23.4\% steady-state error), indicating insufficient energy injection capability. The robot has zero robustness to horizontal disturbances. The implementation provides a foundation for future improvements including predicted-apex control and disturbance rejection.
+
+\begin{thebibliography}{9}
+
+\bibitem{raibert1986legged}
+M.~H. Raibert, \emph{Legged Robots That Balance}. MIT Press, 1986.
+
+\bibitem{pybullet}
+E.~Coumans and Y.~Bai, ``PyBullet: Python module for physics simulation,'' 2016--2024. \url{https://pybullet.org}
+
+\bibitem{urdf}
+ROS Wiki, ``URDF (Unified Robot Description Format).'' \url{http://wiki.ros.org/urdf}
+
+\end{thebibliography}
+
+\end{document}
+
