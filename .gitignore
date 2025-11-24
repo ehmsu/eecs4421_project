@@ -16,3 +16,12 @@ dist/
 
 # Ignore generated URDFs
 assets/jumping_robot/eecs4421_1d_hopper.urdf
+
+# Ignore Latex gen files
+EECS_4421_Project_Report/*.aux
+EECS_4421_Project_Report/*.fdb_latexmk
+EECS_4421_Project_Report/*.fls
+EECS_4421_Project_Report/*.log
+EECS_4421_Project_Report/*.out
+EECS_4421_Project_Report/*.pdf
+EECS_4421_Project_Report/*.synctex.gz
